@@ -21,40 +21,102 @@ try:
 except ImportError:
     createParser = None
 
-# Backup folders support formats:
-#  - mm-dd-yy   mm_dd_yy
-#  - mm-dd-yyyy mm_dd_yyyy
-#  - yyyy-mm-dd yyyy_mm_dd
+# Supports the following backup folder date formats:
+#  • mm-dd-yy    mm_dd_yy
+#  • mm-dd-yyyy  mm_dd_yyyy
+#  • yyyy-mm-dd  yyyy_mm_dd
+#  • yyyy-mm     yyyy_mm
+#  • mm-yyyy     mm_yyyy
 BACKUP_PATTERN = re.compile(
     r'^(?:'
-      r'\d{1,2}[-_]\d{1,2}[-_]\d{2}(?:\d{2})?'    # mm[-_]dd[-_]yy or mm[-_]dd[-_]yyyy
+      r'\d{1,2}[-_]\d{1,2}[-_]\d{2}(?:\d{2})?'  # mm[-_]dd[-_]yy or mm[-_]dd[-_]yyyy
     r'|'
-      r'\d{4}[-_]\d{1,2}[-_]\d{1,2}'              # yyyy[-_]mm[-_]dd
+      r'\d{4}[-_]\d{1,2}[-_]\d{1,2}'           # yyyy[-_]mm[-_]dd
+    r'|'
+      r'\d{4}[-_]\d{1,2}'                     # yyyy[-_]mm
+    r'|'
+      r'\d{1,2}[-_]\d{4}'                     # mm[-_]yyyy
     r')$'
 )
 
 def parse_backup_date(name: str) -> date | None:
     """
-    Parse folder name into a date object.
-    Returns None if it doesn't form a valid date.
+    Parse a backup‐folder name into a date:
+      • Day‐based → exact date (09-07-21 → 2021-09-07)  
+      • Month‐based → first of month  (2019-09 → 2019-09-01)  
+      • Month‐Year  → first of month  (09-2019 → 2019-09-01)  
+    Returns None if invalid.
     """
-    parts = name.split('-')
-    if len(parts) != 3:
+    parts = re.split(r'[-_]', name)
+    # Day‐based
+    if len(parts) == 3:
+        try:
+            if len(parts[0]) == 4:
+                y, m, d = map(int, parts)
+            else:
+                m, d = map(int, parts[:2]); y = int(parts[2])
+                if y < 100: y += 2000
+            return date(y, m, d)
+        except ValueError:
+            return None
+    # Two‐part cases
+    if len(parts) == 2:
+        p0, p1 = parts
+        # YYYY‐MM
+        if len(p0) == 4 and p1.isdigit():
+            try:
+                y, m = int(p0), int(p1)
+                if 1 <= m <= 12: return date(y, m, 1)
+            except ValueError:
+                return None
+        # MM‐YYYY
+        if len(p1) == 4 and p0.isdigit():
+            try:
+                m, y = int(p0), int(p1)
+                if 1 <= m <= 12: return date(y, m, 1)
+            except ValueError:
+                return None
+    return None
+
+
+def infer_backup_date(folder: Path) -> date | None:
+    """
+    Better-than‐fallback date for 'folder':
+      1) If parse_backup_date gives day>1, return it.
+      2) If day==1 (month‐only), tally each file’s actual date; if one date >50%,
+         return that “majority” date.
+      3) Otherwise (no majority), return None → sort *all* files.
+    """
+    base = parse_backup_date(folder.name)
+    if base is None:
+        return None
+    # day‐based → keep exact
+    if base.day != 1:
+        return base
+
+    # month‐only → tally
+    counts: dict[date,int] = {}
+    total = 0
+    for f in folder.iterdir():
+        if not f.is_file(): continue
+        ext = f.suffix.lower()
+        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+            continue
+        dt = datetime.fromtimestamp(get_earliest_timestamp(f)).date()
+        if dt.year == base.year and dt.month == base.month:
+            counts[dt] = counts.get(dt, 0) + 1
+            total += 1
+
+    if not counts:
         return None
 
-    # yyyy-mm-dd
-    if len(parts[0]) == 4:
-        year, month, day = map(int, parts)
-    else:
-        # mm-dd-yy or mm-dd-yyyy
-        month, day = map(int, parts[:2])
-        year = int(parts[2])
-        if year < 100:           # two-digit year
-            year += 2000
-    try:
-        return date(year, month, day)
-    except ValueError:
-        return None
+    best_dt, best_ct = max(counts.items(), key=lambda x: x[1])
+    if best_ct > total / 2:
+        return best_dt
+
+    # NO majority → return None so EVERYTHING gets sorted
+    return None
+
 
 def is_screenshot(path: Path) -> bool:
     ext = path.suffix.lower()
