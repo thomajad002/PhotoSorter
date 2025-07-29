@@ -11,7 +11,7 @@ from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
 
 from utils       import IMAGE_EXTS, VIDEO_EXTS, safe_mkdir, cleanup_empty, get_earliest_timestamp
-from detectors   import BACKUP_PATTERN, parse_backup_date, is_screenshot, is_screen_recording
+from detectors   import BACKUP_PATTERN, parse_backup_date, is_screenshot, is_screen_recording, infer_backup_date
 from diologs     import FolderDialog, DecisionDialog, DuplicateDialog, LiveDialog
 
 # Folders we generate ourselves—never ask on these, but do descend into them.
@@ -53,27 +53,71 @@ def remove_sidecars(src: Path):
 
 def handle_backup_folders(src: Path):
     """
-    Depth-first, find any folders whose name matches BACKUP_PATTERN,
-    auto-sort their contents into the main year/month tree,
-    then remove the now-empty backup folder.
+    1) Find all folders matching BACKUP_PATTERN, depth-first.
+    2) For each:
+         a) parse its date
+         b) move screenshots & screen recordings out always
+         c) leave other media if date == folder date, else sort normally
+         d) move the (possibly pruned) backup folder under src/YYYY
     """
-    # collect all matching folders
+    # 1) Gather all matching backup folders
     backups = []
-    for dirpath, dirnames, _ in os.walk(src):
+    for dirpath, _, _ in os.walk(src):
         folder = Path(dirpath)
         if folder == src:
             continue
         if BACKUP_PATTERN.match(folder.name):
             backups.append(folder)
-    # sort deepest first
+
+    # 2) Sort by depth (deepest first)
     backups.sort(key=lambda p: len(p.parts), reverse=True)
 
+    # 3) Process each backup folder
     for folder in backups:
-        # move everything under this folder into YYYY/MM-Month under src
-        apply_choice_to_folder(folder, src, 'sort_into_years')
-        # clean up if empty
-        cleanup_empty(folder, src)
-        print(f"→ Auto‐sorted backup folder: {folder.relative_to(src)}")
+        bdate = infer_backup_date(folder)  # date or None
+
+        # 3b) Move files inside folder
+        for file in list(folder.iterdir()):
+            if not file.is_file():
+                continue
+            ext = file.suffix.lower()
+            if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+                continue
+
+            # Always extract screenshots & recordings
+            if is_screenshot(file):
+                dest = src / 'Screenshots'
+            elif is_screen_recording(file):
+                dest = src / 'ScreenRecordings'
+            else:
+                ts = get_earliest_timestamp(file)
+                real_date = datetime.fromtimestamp(ts).date()
+                if bdate is not None and real_date == bdate:
+                    # leave in place
+                    continue
+                # else: sort by real capture date
+                dest = src / str(real_date.year) / real_date.strftime('%m-%B')
+
+            if safe_mkdir(dest):
+                try:
+                    shutil.move(str(file), str(dest / file.name))
+                    cleanup_empty(file.parent, src)
+                except OSError:
+                    # skip files that fail to move
+                    continue
+
+        # 3c) Move or remove the backup folder itself
+        if bdate is not None:
+            year_dest = src / str(bdate.year)
+            if safe_mkdir(year_dest):
+                try:
+                    shutil.move(str(folder), str(year_dest / folder.name))
+                except OSError:
+                    pass
+        else:
+            # no majority date → everything moved out, so delete the empty folder
+            cleanup_empty(folder, src)
+
 
 def apply_choice_to_folder(entry: Path, root: Path, choice: str):
     """
@@ -177,44 +221,72 @@ def sort_files(src: Path):
 
     skipped_roots: set[str] = set()
 
-    # 2) Depth-first walk of subfolders only
+    # 2) Sort loose files in the root directory itself
+    for file in list(src.iterdir()):
+        if not file.is_file():
+            continue
+        ext = file.suffix.lower()
+        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+            continue
+
+        # decide destination
+        if is_screenshot(file):
+            dest = src / 'Screenshots'
+        elif is_screen_recording(file):
+            dest = src / 'ScreenRecordings'
+        else:
+            ts   = get_earliest_timestamp(file)
+            dt   = datetime.fromtimestamp(ts)
+            dest = src / str(dt.year) / dt.strftime('%m-%B')
+
+        if safe_mkdir(dest):
+            try:
+                shutil.move(str(file), str(dest / file.name))
+                cleanup_empty(file.parent, src)
+            except OSError:
+                continue
+
+    # 3) Auto-handle all backup‐style folders
+    handle_backup_folders(src)
+
+    skipped_roots: set[str] = set()
+
+    # 4) Depth-first walk of **remaining** subfolders
     for dirpath, _, filenames in os.walk(src, topdown=False):
         folder = Path(dirpath)
-
-        # never prompt on the root itself
         if folder == src:
             continue
 
         rel = folder.relative_to(src)
 
-        # a) skip backup-pattern dirs (already handled)
+        # a) skip any backup folders (already moved)
         if BACKUP_PATTERN.match(folder.name):
             cleanup_empty(folder, src)
             continue
 
-        # b) auto-sort generated folders without prompting
+        # b) auto-sort generated folders
         if folder.name in GENERATED_FOLDERS:
             apply_choice_to_folder(folder, src, 'sort_inside')
             continue
 
-        # c) skip already-structured year/month dirs
+        # c) skip year/month folders already in place
         if YEAR_PATTERN.match(folder.name) or MONTH_PATTERN.match(folder.name):
             continue
 
-        # d) skip subtree if root was “skip”ped
+        # d) skip subtrees the user chose to skip
         if rel.parts and rel.parts[0] in skipped_roots:
             continue
 
-        # e) skip and delete if no media files here
-        has_media = any(
-            (folder / f).suffix.lower() in IMAGE_EXTS | VIDEO_EXTS
-            for f in filenames
+        # e) skip & delete if empty
+        media_here = any(
+            (folder / fn).suffix.lower() in IMAGE_EXTS | VIDEO_EXTS
+            for fn in filenames
         )
-        if not has_media:
+        if not media_here:
             cleanup_empty(folder, src)
             continue
 
-        # f) prompt the user for this folder
+        # f) prompt the user
         choice = FolderDialog(folder).run()
         if choice == 'quit':
             sys.exit(0)
@@ -224,13 +296,13 @@ def sort_files(src: Path):
             skipped_roots.add(rel.parts[0])
             continue
 
-        # g) apply user’s choice
+        # g) apply their action
         if choice in ('sort_inside', 'sort_into_years'):
             apply_choice_to_folder(folder, src, choice)
 
-        # h) finally, move any loose files in this exact folder
-        for fname in filenames:
-            file = folder / fname
+        # h) finally move any loose files in this folder
+        for fn in filenames:
+            file = folder / fn
             if not file.is_file() or file.name.startswith('._'):
                 continue
             if any(BACKUP_PATTERN.match(p) for p in file.relative_to(src).parts):
@@ -244,8 +316,8 @@ def sort_files(src: Path):
             elif is_screen_recording(file):
                 dest = src / 'ScreenRecordings'
             else:
-                ts = get_earliest_timestamp(file)
-                dt = datetime.fromtimestamp(ts)
+                ts   = get_earliest_timestamp(file)
+                dt   = datetime.fromtimestamp(ts)
                 dest = src / str(dt.year) / dt.strftime('%m-%B')
 
             if safe_mkdir(dest):
