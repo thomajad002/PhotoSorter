@@ -21,13 +21,20 @@ def get_earliest_timestamp(path: Path) -> float:
     Return the older of (modified time) vs. (creation time).
     If the file has already vanished (e.g. a phantom ._ metadata file),
     fall back to the parent directory's mtime.
+    If *that* also fails (because the parent was already moved/removed),
+    fall back to the current time to avoid crashing.
     """
     try:
         stat = path.stat()
     except FileNotFoundError:
-        # most likely an Apple resource‐fork ._ file that no longer exists
-        stat = path.parent.stat()
+        # file has vanished—try parent folder
+        try:
+            stat = path.parent.stat()
+        except FileNotFoundError:
+            # both file and parent gone; return "now"
+            return datetime.now().timestamp()
 
+    # collect mtime, birthtime/ctime if available
     times = [stat.st_mtime]
     if hasattr(stat, 'st_birthtime'):
         times.append(stat.st_birthtime)
@@ -37,6 +44,9 @@ def get_earliest_timestamp(path: Path) -> float:
 
 
 def safe_mkdir(path: Path) -> bool:
+    """
+    Make a directory and swallow read-only errors.
+    """
     try:
         path.mkdir(parents=True, exist_ok=True)
         return True
@@ -48,6 +58,9 @@ def safe_mkdir(path: Path) -> bool:
 
 
 def cleanup_empty(path: Path, root: Path):
+    """
+    Recursively remove any empty directories up to 'root'.
+    """
     p = path
     while p != root and p.exists() and p.is_dir() and not any(p.iterdir()):
         try:
@@ -58,10 +71,15 @@ def cleanup_empty(path: Path, root: Path):
 
 
 def choose_folder() -> Path | None:
+    """
+    Prompt the user with an NSOpenPanel/folder dialog and return the Path.
+    """
     root = tk.Tk()
     root.withdraw()
     root.lift()
     root.attributes("-topmost", True)
-    folder = filedialog.askdirectory(title="Select folder to organize", parent=root)
+    folder = filedialog.askdirectory(
+        title="Select folder to organize", parent=root
+    )
     root.destroy()
     return Path(folder) if folder else None

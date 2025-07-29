@@ -21,8 +21,17 @@ try:
 except ImportError:
     createParser = None
 
-# Backup folders support formats: mm-dd-yy, mm-dd-yyyy, or yyyy-mm-dd
-BACKUP_PATTERN = re.compile(r'^(?:\d{1,2}-\d{1,2}-\d{2}(?:\d{2})?|\d{4}-\d{1,2}-\d{1,2})$')
+# Backup folders support formats:
+#  - mm-dd-yy   mm_dd_yy
+#  - mm-dd-yyyy mm_dd_yyyy
+#  - yyyy-mm-dd yyyy_mm_dd
+BACKUP_PATTERN = re.compile(
+    r'^(?:'
+      r'\d{1,2}[-_]\d{1,2}[-_]\d{2}(?:\d{2})?'    # mm[-_]dd[-_]yy or mm[-_]dd[-_]yyyy
+    r'|'
+      r'\d{4}[-_]\d{1,2}[-_]\d{1,2}'              # yyyy[-_]mm[-_]dd
+    r')$'
+)
 
 def parse_backup_date(name: str) -> date | None:
     """

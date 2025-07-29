@@ -1,4 +1,5 @@
 import os
+import sys
 import hashlib
 import re
 import shutil
@@ -7,9 +8,11 @@ from tkinter import messagebox, filedialog
 from send2trash import send2trash
 from pathlib import Path
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor
+
 from utils       import IMAGE_EXTS, VIDEO_EXTS, safe_mkdir, cleanup_empty, get_earliest_timestamp
-from detectors  import BACKUP_PATTERN, parse_backup_date, is_screenshot, is_screen_recording
-from diologs    import FolderDialog, DecisionDialog, DuplicateDialog, LiveDialog
+from detectors   import BACKUP_PATTERN, parse_backup_date, is_screenshot, is_screen_recording
+from diologs     import FolderDialog, DecisionDialog, DuplicateDialog, LiveDialog
 
 # Folders we generate ourselves—never ask on these, but do descend into them.
 GENERATED_FOLDERS = {'Screenshots', 'ScreenRecordings', 'Memes'}
@@ -37,69 +40,49 @@ def prompt_and_move(folder_path: str):
         shutil.move(folder_path, os.path.join(target, os.path.basename(folder_path)))
 
 def remove_sidecars(src: Path):
-    """Trash every Thumbs.db or .aae anywhere under src."""
-    for f in src.rglob('*'):
-        if not f.is_file():
+    """Trash every sidecar files anywhere under src."""
+    sidecar_exts = {'.aae', '.xmp', '.ini', '.lnk', '.thm', '.db', '.modd', '.moff'}  # Add any more junk files here so they get auto deleted
+
+    for file in src.rglob('*'):
+        if not file.is_file():
             continue
-        nl = f.name.lower()
-        if nl == 'thumbs.db' or nl.endswith('.aae') or nl.endswith('.modd') or nl.endswith('.moff'):
-            send2trash(str(f))
-            cleanup_empty(f.parent, src)
+        if file.suffix.lower() in sidecar_exts:
+            print(f"→ Removing junk file: {file.relative_to(src)}")
+            send2trash(str(file))
+            cleanup_empty(file.parent, src)
 
 def handle_backup_folders(src: Path):
     """
-    Only top-level (iterdir) folders matching BACKUP_PATTERN.
-    Prune sidecars, move files dated < folder_date, then relocate folder.
+    Depth-first, find any folders whose name matches BACKUP_PATTERN,
+    auto-sort their contents into the main year/month tree,
+    then remove the now-empty backup folder.
     """
-    for folder in sorted(src.iterdir()):
-        if not folder.is_dir() or not BACKUP_PATTERN.match(folder.name):
+    # collect all matching folders
+    backups = []
+    for dirpath, dirnames, _ in os.walk(src):
+        folder = Path(dirpath)
+        if folder == src:
             continue
+        if BACKUP_PATTERN.match(folder.name):
+            backups.append(folder)
+    # sort deepest first
+    backups.sort(key=lambda p: len(p.parts), reverse=True)
 
-        folder_date = parse_backup_date(folder.name)
-        if not folder_date:
-            continue
-
-        moved = kept = 0
-
-        # Step 1: inside the backup folder
-        for file in folder.rglob('*'):
-            if not file.is_file() or file.name.startswith('._'):
-                continue
-
-            nl  = file.name.lower()
-            ext = file.suffix.lower()
-
-            # only media
-            if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
-                continue
-
-            # move if strictly older than label
-            ts      = get_earliest_timestamp(file)
-            file_dt = datetime.fromtimestamp(ts).date()
-            if file_dt < folder_date:
-                dest = src / str(file_dt.year) / datetime.fromtimestamp(ts).strftime('%m-%B')
-                if safe_mkdir(dest):
-                    shutil.move(str(file), str(dest / file.name))
-                    cleanup_empty(file.parent, folder)
-                moved += 1
-            else:
-                kept += 1
-
-        # Step 2: relocate the (possibly reduced) backup folder
-        year_dir = src / str(folder_date.year)
-        if safe_mkdir(year_dir):
-            shutil.move(str(folder), str(year_dir / folder.name))
-            # clean up any empty parent *of* the backup folder (but not the folder itself)
-            cleanup_empty(folder.parent, src)
-
-        # Summary
-        print(f"→ Backup '{folder.name}': moved {moved}, kept {kept}")
+    for folder in backups:
+        # move everything under this folder into YYYY/MM-Month under src
+        apply_choice_to_folder(folder, src, 'sort_into_years')
+        # clean up if empty
+        cleanup_empty(folder, src)
+        print(f"→ Auto‐sorted backup folder: {folder.relative_to(src)}")
 
 def apply_choice_to_folder(entry: Path, root: Path, choice: str):
     """
-    Apply 'sort_inside' or 'sort_into_years' choice to every media file in 'entry'.
+    Move every image/video under `entry`:
+      - 'sort_inside'    → into subfolders under `entry` itself
+      - 'sort_into_years'→ into year/month under `root`
     """
-    target_root = entry if choice == 'sort_inside' else root
+    target = entry if choice == 'sort_inside' else root
+
     for file in entry.rglob('*'):
         if not file.is_file() or file.name.startswith('._'):
             continue
@@ -107,18 +90,28 @@ def apply_choice_to_folder(entry: Path, root: Path, choice: str):
         if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
             continue
 
-        if is_screenshot(file):
-            dest = target_root / 'Screenshots'
-        elif is_screen_recording(file):
-            dest = target_root / 'ScreenRecordings'
+        # --- SPECIAL-CASE generated folders so they NEVER nest ---
+        if choice == 'sort_inside' and entry.name in GENERATED_FOLDERS:
+            dest = entry
+
+        # --- otherwise, your usual destination logic ---
         else:
-            ts   = get_earliest_timestamp(file)
-            dt   = datetime.fromtimestamp(ts)
-            dest = target_root / str(dt.year) / dt.strftime('%m-%B')
+            if is_screenshot(file):
+                dest = target / 'Screenshots'
+            elif is_screen_recording(file):
+                dest = target / 'ScreenRecordings'
+            else:
+                ts   = get_earliest_timestamp(file)
+                dt   = datetime.fromtimestamp(ts)
+                dest = target / str(dt.year) / dt.strftime('%m-%B')
 
         if safe_mkdir(dest):
-            shutil.move(str(file), str(dest / file.name))
-            cleanup_empty(file.parent, root)
+            try:
+                shutil.move(str(file), str(dest / file.name))
+                cleanup_empty(file.parent, root)
+            except OSError:
+                # skip I/O errors
+                continue
 
 def interactive_walk(path: Path, root: Path) -> bool | str:
     """
@@ -182,65 +175,86 @@ def sort_files(src: Path):
     # 1) fix up any top-level backup folders
     handle_backup_folders(src)
 
-    # 2) interactive pass on every non‐generated top‐level folder,
-    #    tracking any that the user chooses to “keep as is” (skip entire subtree).
-    skipped: set[str] = set()
-    for entry in sorted(src.iterdir()):
-        if not entry.is_dir() or BACKUP_PATTERN.match(entry.name):
+    skipped_roots: set[str] = set()
+
+    # 2) Depth-first walk of subfolders only
+    for dirpath, _, filenames in os.walk(src, topdown=False):
+        folder = Path(dirpath)
+
+        # never prompt on the root itself
+        if folder == src:
             continue
 
-        # if user chooses to quit, stop altogether
-        res = interactive_walk(entry, src)
-        if res is False:
-            return
-        # if res is the string 'skip', remember to leave this subtree alone
-        if res == 'skip':
-            skipped.add(entry.name)
+        rel = folder.relative_to(src)
 
-    # 3) final loose-file sweep (but skip any top‐level folders the user told us to keep)
-    for file in src.rglob('*'):
-        if not file.is_file():
-            continue
-        # skip files under any top‐level folder we marked “skip”
-        rel = file.relative_to(src)
-        if rel.parts and rel.parts[0] in skipped:
-            continue
-  
-
-        name_l = file.name.lower()
-        # global sidecars
-        if name_l == 'thumbs.db' or name_l.endswith('.aae'):
-            send2trash(str(file))
-            cleanup_empty(file.parent, src)
+        # a) skip backup-pattern dirs (already handled)
+        if BACKUP_PATTERN.match(folder.name):
+            cleanup_empty(folder, src)
             continue
 
-        if file.name.startswith('._'):
+        # b) auto-sort generated folders without prompting
+        if folder.name in GENERATED_FOLDERS:
+            apply_choice_to_folder(folder, src, 'sort_inside')
             continue
 
-        # **new**: skip anything under a backup-folder at any depth
-        rel_parts = file.relative_to(src).parts
-        if any(BACKUP_PATTERN.match(part) for part in rel_parts):
+        # c) skip already-structured year/month dirs
+        if YEAR_PATTERN.match(folder.name) or MONTH_PATTERN.match(folder.name):
             continue
 
-        ext = file.suffix.lower()
-        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+        # d) skip subtree if root was “skip”ped
+        if rel.parts and rel.parts[0] in skipped_roots:
             continue
 
-        if is_screenshot(file):
-            dest = src / 'Screenshots'
-        elif is_screen_recording(file):
-            dest = src / 'ScreenRecordings'
-        else:
-            ts = get_earliest_timestamp(file)
-            dt = datetime.fromtimestamp(ts)
-            dest = src / str(dt.year) / dt.strftime('%m-%B')
+        # e) skip and delete if no media files here
+        has_media = any(
+            (folder / f).suffix.lower() in IMAGE_EXTS | VIDEO_EXTS
+            for f in filenames
+        )
+        if not has_media:
+            cleanup_empty(folder, src)
+            continue
 
-        if safe_mkdir(dest):
-            try:
-                shutil.move(str(file), str(dest / file.name))
-                cleanup_empty(file.parent, src)
-            except Exception:
-                pass
+        # f) prompt the user for this folder
+        choice = FolderDialog(folder).run()
+        if choice == 'quit':
+            sys.exit(0)
+        if choice is False or choice == 'keep':
+            continue
+        if choice == 'skip':
+            skipped_roots.add(rel.parts[0])
+            continue
+
+        # g) apply user’s choice
+        if choice in ('sort_inside', 'sort_into_years'):
+            apply_choice_to_folder(folder, src, choice)
+
+        # h) finally, move any loose files in this exact folder
+        for fname in filenames:
+            file = folder / fname
+            if not file.is_file() or file.name.startswith('._'):
+                continue
+            if any(BACKUP_PATTERN.match(p) for p in file.relative_to(src).parts):
+                continue
+            ext = file.suffix.lower()
+            if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+                continue
+
+            if is_screenshot(file):
+                dest = src / 'Screenshots'
+            elif is_screen_recording(file):
+                dest = src / 'ScreenRecordings'
+            else:
+                ts = get_earliest_timestamp(file)
+                dt = datetime.fromtimestamp(ts)
+                dest = src / str(dt.year) / dt.strftime('%m-%B')
+
+            if safe_mkdir(dest):
+                try:
+                    shutil.move(str(file), str(dest / file.name))
+                    cleanup_empty(file.parent, src)
+                except OSError:
+                    continue
+
 
 
 def handle_live(src: Path):
@@ -362,17 +376,44 @@ def choose_default_duplicate(group: list[Path], src: Path) -> int:
     final = [e for e in ts_ents if prio_order[e['ftype']]==min_pr]
     return group.index(final[0]['file'])
 
-def find_duplicates(src: Path):
-    hashes = {}
-    for file in src.rglob('*'):
-        if not file.is_file() or file.suffix.lower() not in IMAGE_EXTS:
-            continue
-        if file.name.startswith('._'):
-            continue
-        h = hashlib.md5(file.read_bytes()).hexdigest()
-        hashes.setdefault(h, []).append(file)
+def file_hash(path: Path) -> tuple[Path, str]:
+    """
+    Top-level function so multiprocessing can pickle it.
+    Returns (path, md5hex).
+    """
+    h = hashlib.md5()
+    with open(path, 'rb') as fp:
+        for chunk in iter(lambda: fp.read(8192), b''):
+            h.update(chunk)
+    return path, h.hexdigest()
 
-    dup_groups = [g for g in hashes.values() if len(g) > 1]
+def find_duplicates(src: Path):
+    # 1) Bucket by size
+    size_map: dict[int, list[Path]] = {}
+    scanned = 0
+    for f in src.rglob('*'):
+        if not f.is_file() or f.suffix.lower() not in IMAGE_EXTS or f.name.startswith('._'):
+            continue
+        size_map.setdefault(f.stat().st_size, []).append(f)
+        scanned += 1
+
+    # 2) Gather only the “collisions”
+    candidates = [p for paths in size_map.values() if len(paths) > 1 for p in paths]
+    if not candidates:
+        messagebox.showinfo('Duplicates', 'No duplicates found.')
+        return
+
+    # 3) Parallel hash
+    hash_map: dict[tuple[int,str], list[Path]] = {}
+    total = len(candidates)
+    hashed = 0
+    with ProcessPoolExecutor() as pool:
+        for path, hval in pool.map(file_hash, candidates):
+            key = (path.stat().st_size, hval)
+            hash_map.setdefault(key, []).append(path)
+            hashed += 1
+    # 4) Prompt on each real duplicate group
+    dup_groups = [grp for grp in hash_map.values() if len(grp) > 1]
     if not dup_groups:
         messagebox.showinfo('Duplicates', 'No duplicates found.')
         return
@@ -386,12 +427,12 @@ def find_duplicates(src: Path):
         # keep only chosen one
         if action.startswith('keep') and action != 'keep_all':
             idx = int(action.replace('keep', ''))
-            for j, f in enumerate(group):
-                if j != idx:
+            for i, f in enumerate(group):
+                if i != idx:
                     send2trash(str(f))
                     cleanup_empty(f.parent, src)
         elif action == 'delete_all':
             for f in group:
                 send2trash(str(f))
                 cleanup_empty(f.parent, src)
-        # keep_all → no action
+        # keep_all → do nothing
