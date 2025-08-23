@@ -11,7 +11,16 @@ if __name__ == '__main__':
     parser.add_argument('--live', action='store_true', help='Review Live Photos')
     args = parser.parse_args()
 
-    src = choose_folder()
+    if args.src_path:
+        from pathlib import Path
+        cand = Path(args.src_path).expanduser()
+        if not cand.exists() or not cand.is_dir():
+            print('Provided --src is not a directory.')
+            sys.exit(1)
+        src = cand
+    else:
+        src = choose_folder()
+        
     if not src:
         print('No folder selected, exiting.')
         sys.exit(1)

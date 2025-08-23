@@ -267,10 +267,6 @@ You can add formats by editing `IMAGE_EXTS` / `VIDEO_EXTS` in [utils.py](utils.p
 Tune backup recognition by modifying [`BACKUP_PATTERN`](detectors.py).  
 Add/remove junk extensions in `remove_sidecars` inside [sort_logic.py](sort_logic.py).
 
-## 12. License
-
-(Add your license here.)
-
 ## 13. Disclaimer
 
 Always test on a copy first. No warranty—use at your own risk.
