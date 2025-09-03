@@ -12,7 +12,7 @@ from PIL import ExifTags
 
 # Supported extensions, including GoPro low-res preview files (.lrv)
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.heic', '.heif', '.tiff'}
-VIDEO_EXTS = {'.mp4', '.mov', '.avi', '.mkv', '.lrv', '.3gp', '.m2ts', '.webm', '.wmv'}
+VIDEO_EXTS = {'.mp4', '.mov', '.avi', '.mkv', '.lrv', '.3gp', '.m2ts', '.webm', '.wmv', '.mts'}
 ALL_EXTS = IMAGE_EXTS | VIDEO_EXTS | {'.aae'}
 
 # ExifTags lookup for screenshots
