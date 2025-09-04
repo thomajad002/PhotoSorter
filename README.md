@@ -109,27 +109,31 @@ pip3 install pillow send2trash pillow-heif hachoir
 
 ## 3. Running
 
-Basic (sort only):
+### Skip the folder chooser (pass a source path)
+Recommended if the file picker is unstable on your system.
+```
+python3 main.py --src "/full/path/to/your/photos"
+```
+
+Combine with other modes:
+- Strong review after sort:
+  ```
+  python3 main.py --src "/full/path/to/your/photos" --strong-sort
+  ```
+- Duplicate detection only:
+  ```
+  python3 main.py --src "/full/path/to/your/photos" --duplicates
+  ```
+- Live Photo companion review:
+  ```
+  python3 main.py --src "/full/path/to/your/photos" --live
+  ```
+
+### Use the folder chooser (GUI)
 ```
 python3 main.py
 ```
-
-Interactive strong review after auto sort:
-```
-python3 main.py --strong-sort
-```
-
-Duplicate detection only (no sorting):
-```
-python3 main.py --duplicates
-```
-
-Live Photo companion review only:
-```
-python3 main.py --live
-```
-
-You will first be prompted to choose the source folder (`choose_folder` GUI from [`choose_folder`](utils.py)).
+You will be prompted to choose the source folder.
 
 ## 4. How Sorting Works
 
@@ -214,6 +218,16 @@ Run with:
 ```
 python main.py --duplicates
 ```
+Or run with `--src`:
+```
+python3 main.py --src "/full/path/to/your/photos" --duplicates
+```
+You get a grid of thumbnails (`DuplicateDialog`). Actions:
+- Keep This One (trash all others)
+- Keep All
+- Delete All
+- Quit
+
 You get a grid of thumbnails (`DuplicateDialog`). Actions:
 - Keep This One (trash all others)
 - Keep All
@@ -256,6 +270,7 @@ Add your screenshots in a `docs/` folder or similar.
 
 | Issue | Fix |
 |-------|-----|
+| macOS file picker opens off-screen or disappears | Run with `--src "/full/path"` to skip the picker. |
 | Tk window doesn’t appear (Linux) | Ensure desktop session and `python3-tk` installed |
 | HEIC won’t open | Install `pillow-heif` |
 | Slow duplicate hashing | Large images: be patient; runs in parallel |
