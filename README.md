@@ -135,6 +135,10 @@ python3 main.py
 ```
 You will be prompted to choose the source folder.
 
+Note for macOS (especially newer Apple Silicon systems):
+- The folder chooser behavior was updated to avoid a Tk/macOS parent-window issue where the picker could dismiss immediately when clicked.
+- If your local Python/Tk build still behaves oddly, run with `--src "/full/path/to/your/photos"` to bypass the picker.
+
 ## 4. How Sorting Works
 
 1. Sidecar cleanup: unwanted auxiliary files removed first.
@@ -270,7 +274,7 @@ Add your screenshots in a `docs/` folder or similar.
 
 | Issue | Fix |
 |-------|-----|
-| macOS file picker opens off-screen or disappears | Run with `--src "/full/path"` to skip the picker. |
+| macOS file picker opens off-screen or disappears | Updated builds include a macOS-specific picker fix; if it still happens, run with `--src "/full/path"` to skip the picker. |
 | Tk window doesn’t appear (Linux) | Ensure desktop session and `python3-tk` installed |
 | HEIC won’t open | Install `pillow-heif` |
 | Slow duplicate hashing | Large images: be patient; runs in parallel |

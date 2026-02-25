@@ -6,6 +6,7 @@ from sort_logic  import sort_files, handle_live, strong_sort, find_duplicates
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PhotoSorter')
+    parser.add_argument('--src', '--path', dest='src_path', help='Folder to organize (skip chooser)')
     parser.add_argument('--strong-sort', action='store_true', help='Review after sort')
     parser.add_argument('--duplicates', action='store_true', help='Find and resolve duplicates')
     parser.add_argument('--live', action='store_true', help='Review Live Photos')

@@ -75,11 +75,27 @@ def choose_folder() -> Path | None:
     Prompt the user with an NSOpenPanel/folder dialog and return the Path.
     """
     root = tk.Tk()
-    root.withdraw()
-    root.lift()
-    root.attributes("-topmost", True)
-    folder = filedialog.askdirectory(
-        title="Select folder to organize", parent=root
-    )
-    root.destroy()
+    try:
+        root.withdraw()
+        root.update_idletasks()
+        root.update()
+
+        if platform.system() == 'Darwin':
+            # On newer macOS/Tk builds, passing a withdrawn Tk root as parent can
+            # cause the chooser to dismiss immediately on click.
+            folder = filedialog.askdirectory(
+                title="Select folder to organize",
+                mustexist=True,
+            )
+        else:
+            root.lift()
+            root.attributes("-topmost", True)
+            folder = filedialog.askdirectory(
+                title="Select folder to organize",
+                parent=root,
+                mustexist=True,
+            )
+    finally:
+        root.destroy()
+
     return Path(folder) if folder else None
