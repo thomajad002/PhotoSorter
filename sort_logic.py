@@ -12,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 from utils       import IMAGE_EXTS, VIDEO_EXTS, safe_mkdir, cleanup_empty, get_earliest_timestamp
 from detectors   import BACKUP_PATTERN, parse_backup_date, is_screenshot, is_screen_recording, infer_backup_date
-from diologs     import FolderDialog, DecisionDialog, DuplicateDialog, LiveDialog
+from diologs     import FolderDialog, DecisionDialog, DuplicateDialog, LiveDialog, get_shared_root
 
 # Folders we generate ourselves—never ask on these, but do descend into them.
 GENERATED_FOLDERS = {'Screenshots', 'ScreenRecordings', 'Memes'}
@@ -328,6 +328,67 @@ def sort_files(src: Path):
                     continue
 
 
+def _safe_copy_target(path: Path) -> Path:
+    if not path.exists():
+        return path
+
+    stem = path.stem if path.is_file() else path.name
+    suffix = path.suffix if path.is_file() else ''
+    parent = path.parent
+
+    idx = 1
+    while True:
+        candidate = parent / f"{stem}_copy{idx}{suffix}"
+        if not candidate.exists():
+            return candidate
+        idx += 1
+
+
+def _copy_source_contents(src: Path, dest_root: Path):
+    for child in src.iterdir():
+        target = _safe_copy_target(dest_root / child.name)
+        if child.is_dir():
+            shutil.copytree(child, target)
+        else:
+            shutil.copy2(child, target)
+
+
+def _flatten_folder_into_root(container: Path, dest_root: Path):
+    if not container.exists() or not container.is_dir():
+        return
+
+    for child in list(container.iterdir()):
+        target = _safe_copy_target(dest_root / child.name)
+        shutil.move(str(child), str(target))
+
+    cleanup_empty(container, dest_root)
+
+
+def sort_files_copy(src: Path, dest_root: Path) -> Path:
+    src_resolved = src.resolve()
+    dest_root_resolved = dest_root.resolve()
+
+    if src_resolved == dest_root_resolved:
+        raise ValueError('Destination root cannot be the same as source folder.')
+
+    if str(dest_root_resolved).startswith(str(src_resolved) + os.sep):
+        raise ValueError('Destination root cannot be inside the source folder.')
+
+    if not dest_root_resolved.exists() or not dest_root_resolved.is_dir():
+        raise ValueError('Destination root must exist and be a directory.')
+
+    legacy_container = dest_root_resolved / src_resolved.name
+    if legacy_container.exists() and legacy_container.is_dir():
+        _flatten_folder_into_root(legacy_container, dest_root_resolved)
+
+    copied_container = _safe_copy_target(dest_root_resolved / src_resolved.name)
+    shutil.copytree(src_resolved, copied_container)
+    _flatten_folder_into_root(copied_container, dest_root_resolved)
+
+    sort_files(dest_root_resolved)
+    return dest_root_resolved
+
+
 
 def handle_live(src: Path):
     for file in src.rglob('*-Live.mov'):
@@ -472,7 +533,7 @@ def find_duplicates(src: Path):
     # 2) Gather only the “collisions”
     candidates = [p for paths in size_map.values() if len(paths) > 1 for p in paths]
     if not candidates:
-        messagebox.showinfo('Duplicates', 'No duplicates found.')
+        messagebox.showinfo('Duplicates', 'No duplicates found.', parent=get_shared_root())
         return
 
     # 3) Parallel hash
@@ -487,7 +548,7 @@ def find_duplicates(src: Path):
     # 4) Prompt on each real duplicate group
     dup_groups = [grp for grp in hash_map.values() if len(grp) > 1]
     if not dup_groups:
-        messagebox.showinfo('Duplicates', 'No duplicates found.')
+        messagebox.showinfo('Duplicates', 'No duplicates found.', parent=get_shared_root())
         return
 
     for group in dup_groups:

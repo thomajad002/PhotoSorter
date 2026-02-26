@@ -22,7 +22,8 @@ It:
 - Cleans up sidecar/junk metadata files automatically.
 
 Core modules:  
-- [main.py](main.py) – CLI entry point  
+- [main.py](main.py) – entry point (home-screen GUI by default, CLI with flags)  
+- [app_ui.py](app_ui.py) – single-window home screen UI flow  
 - [sort_logic.py](sort_logic.py) – main organizing functions: [`sort_files`](sort_logic.py), [`strong_sort`](sort_logic.py), [`find_duplicates`](sort_logic.py), [`handle_live`](sort_logic.py)  
 - [detectors.py](detectors.py) – date folder parsing / media type detection: [`BACKUP_PATTERN`](detectors.py), [`parse_backup_date`](detectors.py), `is_screenshot`, `is_screen_recording`  
 - [utils.py](utils.py) – helpers: [`choose_folder`](utils.py), `get_earliest_timestamp`, `safe_mkdir`  
@@ -40,6 +41,7 @@ Core modules:
 | Strong review pass | Image-by-image triage: Keep / Junk / Meme / Rename / Move date |
 | Duplicate detection | Finds all duplicate folders, and askes which one to keep, default being automaticaly selected based off of being the most likely original |
 | Live Photo review | Handle `*-Live.mov` companions |
+| Copy then sort | Copies source media to a second location and sorts the copy, leaving originals untouched |
 | Junk sidecar cleanup | Removes `.aae .xmp .ini .lnk .thm .db .modd .moff` |
 
 ## 1. Prerequisites
@@ -109,8 +111,29 @@ pip3 install pillow send2trash pillow-heif hachoir
 
 ## 3. Running
 
-### Skip the folder chooser (pass a source path)
-Recommended if the file picker is unstable on your system.
+### Home screen GUI (default)
+```
+python3 main.py
+```
+The app opens a fixed-size home screen where you can choose a feature:
+- Sort in place
+- Sort in place + Strong Sort review
+- Find duplicates
+- Review Live Photos
+- Copy then sort into a second location
+
+The home screen also includes:
+- A progress bar while tasks run
+- A live status log panel that shows operation output in real time
+
+For copy-then-sort, pick:
+1) Source folder (originals stay untouched)
+2) Destination root folder
+
+PhotoSorter copies the source folder, flattens that copied folder into the destination root, then runs normal sorting on the destination root.
+
+### CLI usage (still supported)
+Use flags to run directly without the home screen:
 ```
 python3 main.py --src "/full/path/to/your/photos"
 ```
@@ -129,9 +152,20 @@ Combine with other modes:
   python3 main.py --src "/full/path/to/your/photos" --live
   ```
 
-### Use the folder chooser (GUI)
+- Copy then sort into a second location:
+   ```
+   python3 main.py --src "/full/path/to/your/photos" --dest "/full/path/to/destination-root"
+   ```
+
+- Force legacy CLI flow explicitly:
+   ```
+   python3 main.py --no-gui
+   ```
+
+### Legacy chooser flow
+If you run CLI mode without `--src`, it uses the folder chooser:
 ```
-python3 main.py
+python3 main.py --no-gui
 ```
 You will be prompted to choose the source folder.
 
@@ -275,6 +309,7 @@ Add your screenshots in a `docs/` folder or similar.
 | Issue | Fix |
 |-------|-----|
 | macOS file picker opens off-screen or disappears | Updated builds include a macOS-specific picker fix; if it still happens, run with `--src "/full/path"` to skip the picker. |
+| Windows/dialog position feels inconsistent between actions | The app now uses fixed-size modal windows tied to one root window; restart the app if another tool moved window-manager state. |
 | Tk window doesn’t appear (Linux) | Ensure desktop session and `python3-tk` installed |
 | HEIC won’t open | Install `pillow-heif` |
 | Slow duplicate hashing | Large images: be patient; runs in parallel |

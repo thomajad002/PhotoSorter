@@ -6,25 +6,58 @@ from datetime import datetime
 from PIL import Image, ImageTk
 import subprocess
 import os
-from utils import get_earliest_timestamp, cleanup_empty, safe_mkdir
-# Ensure HEIC support
+from utils import get_earliest_timestamp, cleanup_empty
+
 try:
     import pillow_heif
     pillow_heif.register_heif_opener()
 except ImportError:
     pass
 
+_SHARED_ROOT: tk.Tk | None = None
+
+
+def set_shared_root(root: tk.Tk | None):
+    global _SHARED_ROOT
+    _SHARED_ROOT = root
+
+
+def get_shared_root() -> tk.Tk:
+    global _SHARED_ROOT
+    if _SHARED_ROOT is None or not _SHARED_ROOT.winfo_exists():
+        _SHARED_ROOT = tk.Tk()
+        _SHARED_ROOT.withdraw()
+    return _SHARED_ROOT
+
+
+def _modal_window(title: str, width: int = 980, height: int = 700) -> tk.Toplevel:
+    root = get_shared_root()
+    root.update_idletasks()
+
+    x = root.winfo_x()
+    y = root.winfo_y()
+    if x <= 0 and y <= 0:
+        x, y = 80, 80
+
+    win = tk.Toplevel(root)
+    win.title(title)
+    win.geometry(f"{width}x{height}+{x}+{y}")
+    win.resizable(False, False)
+    win.transient(root)
+    win.grab_set()
+    return win
+
+
 class FolderDialog:
     def __init__(self, path: Path):
         self.path = path
         self.choice = None
 
-    def _set(self, choice, root):
+    def _set(self, choice, win):
         self.choice = choice
-        root.destroy()
+        win.destroy()
 
-    def _open_folder(self, root):
-        """Reveal this folder in Finder/Explorer so you can inspect its contents."""
+    def _open_folder(self, win):
         try:
             if platform.system() == 'Darwin':
                 subprocess.run(['open', str(self.path)])
@@ -33,73 +66,61 @@ class FolderDialog:
             else:
                 subprocess.run(['xdg-open', str(self.path)])
         except Exception as e:
-            messagebox.showerror('Open Folder Failed', str(e), parent=root)
+            messagebox.showerror('Open Folder Failed', str(e), parent=win)
 
-    def _rename_folder(self, root):
-        """Prompt for a new folder name, rename it on disk, and update self.path."""
+    def _rename_folder(self, win):
         new_name = simpledialog.askstring(
             'Rename Folder',
             'Enter new folder name:',
             initialvalue=self.path.name,
-            parent=root
+            parent=win
         )
         if not new_name or new_name == self.path.name:
-            return  # no change, stay in dialog
+            return
         new_path = self.path.parent / new_name
         try:
             self.path.rename(new_path)
             self.path = new_path
-            # optionally: if this new name matches a backup pattern, your backup logic will detect it
         except Exception as e:
-            messagebox.showerror('Rename Failed', f'Could not rename folder:\n{e}', parent=root)
+            messagebox.showerror('Rename Failed', f'Could not rename folder:\n{e}', parent=win)
             return
 
-        # After rename, update the window title so you see the new name
-        root.title(f"Folder: {self.path.name}")
+        win.title(f"Folder: {self.path.name}")
 
     def run(self):
-        root = tk.Tk()
-        root.title(f"Folder: {self.path.name}")
-        tk.Label(root, text="What to do with this folder?").pack(pady=10)
+        win = _modal_window(f"Folder: {self.path.name}", width=980, height=240)
+        win.protocol('WM_DELETE_WINDOW', lambda: self._set('quit', win))
 
-        btn_frame = tk.Frame(root)
-        btn_frame.pack(pady=5)
+        tk.Label(win, text='What to do with this folder?', font=('TkDefaultFont', 12, 'bold')).pack(pady=12)
 
-        tk.Button(btn_frame, text='Open Folder', 
-                  command=lambda: self._open_folder(root)
-        ).pack(side='left', padx=5)
-        tk.Button(btn_frame, text='Rename Folder', 
-                  command=lambda: self._rename_folder(root)
-        ).pack(side='left', padx=5)
-        tk.Button(btn_frame, text='Keep As Is', 
-                  command=lambda: self._set('keep', root)
-        ).pack(side='left', padx=5)
-        tk.Button(btn_frame, text='Sort Inside Only', 
-                  command=lambda: self._set('sort_inside', root)
-        ).pack(side='left', padx=5)
-        tk.Button(btn_frame, text='Sort Into Years', 
-                  command=lambda: self._set('sort_into_years', root)
-        ).pack(side='left', padx=5)
-        tk.Button(btn_frame, text='Quit', 
-                  command=lambda: self._set('quit', root)
-        ).pack(side='left', padx=5)
+        btn_frame = tk.Frame(win)
+        btn_frame.pack(pady=8)
 
-        # Allow Enter to mean “Keep As Is”
-        root.bind('<Return>', lambda e: self._set('keep', root))
-        root.mainloop()
+        tk.Button(btn_frame, text='Open Folder', command=lambda: self._open_folder(win), width=16).grid(row=0, column=0, padx=4, pady=4)
+        tk.Button(btn_frame, text='Rename Folder', command=lambda: self._rename_folder(win), width=16).grid(row=0, column=1, padx=4, pady=4)
+        tk.Button(btn_frame, text='Keep As Is', command=lambda: self._set('keep', win), width=16).grid(row=0, column=2, padx=4, pady=4)
+        tk.Button(btn_frame, text='Sort Inside Only', command=lambda: self._set('sort_inside', win), width=16).grid(row=1, column=0, padx=4, pady=4)
+        tk.Button(btn_frame, text='Sort Into Years', command=lambda: self._set('sort_into_years', win), width=16).grid(row=1, column=1, padx=4, pady=4)
+        tk.Button(btn_frame, text='Quit', command=lambda: self._set('quit', win), width=16).grid(row=1, column=2, padx=4, pady=4)
+
+        win.bind('<Return>', lambda e: self._set('keep', win))
+        win.wait_window()
         return self.choice
+
 
 class DecisionDialog:
     def __init__(self, path: Path, src: Path):
         self.path = path
         self.src = src
         self.choice = None
-    def _set(self, choice, root):
+
+    def _set(self, choice, win):
         self.choice = choice
-        root.destroy()
-    def _rename(self, root):
+        win.destroy()
+
+    def _rename(self, win):
         base = simpledialog.askstring('Rename', 'New base filename (no ext):',
-                                      initialvalue=self.path.stem, parent=root)
+                                      initialvalue=self.path.stem, parent=win)
         if base:
             oldstem = self.path.stem
             newstem = base
@@ -110,15 +131,16 @@ class DecisionDialog:
             if pair.exists():
                 pair.rename(parent / f"{newstem}-Live{self.path.suffix}")
             self.choice = 'ok'
-        root.destroy()
-    def _change_date(self, root):
+        win.destroy()
+
+    def _change_date(self, win):
         initial = datetime.fromtimestamp(get_earliest_timestamp(self.path)).strftime('%Y-%m')
         s = simpledialog.askstring('Change Date Folder', 'Enter YYYY[-MM][-DD]:',
-                                   initialvalue=initial, parent=root)
+                                   initialvalue=initial, parent=win)
         if s:
             parts = s.split('-')
             y, m = int(parts[0]), int(parts[1]) if len(parts) > 1 else 1
-            dest = self.src / str(y) / datetime(y, m, 1).strftime('%B')
+            dest = self.src / str(y) / datetime(y, m, 1).strftime('%m-%B')
             dest.mkdir(parents=True, exist_ok=True)
             newp = dest / self.path.name
             orig_dir = self.path.parent
@@ -128,32 +150,41 @@ class DecisionDialog:
                 old_live.rename(dest / f"{self.path.stem.replace('-Live','')}-Live{self.path.suffix}")
             cleanup_empty(orig_dir, self.src)
             self.choice = 'ok'
-        root.destroy()
+        win.destroy()
+
     def run(self):
-        root = tk.Tk()
         ts = get_earliest_timestamp(self.path)
         dt = datetime.fromtimestamp(ts)
-        root.title(dt.strftime('%B %d, %Y') + ' – ' + self.path.name)
-        root.bind('<Return>', lambda e: self._set('ok', root))
+        win = _modal_window(dt.strftime('%B %d, %Y') + ' – ' + self.path.name)
+        win.protocol('WM_DELETE_WINDOW', lambda: self._set('quit', win))
+
+        win.bind('<Return>', lambda e: self._set('ok', win))
+
+        body = tk.Frame(win)
+        body.pack(fill='both', expand=True, padx=12, pady=12)
+
         try:
             img = Image.open(self.path)
-            img.thumbnail((400,400))
+            img.thumbnail((720, 520))
             tkimg = ImageTk.PhotoImage(img)
-            lbl = tk.Label(root, image=tkimg)
+            lbl = tk.Label(body, image=tkimg)
             lbl.image = tkimg
             lbl.pack(pady=10)
-        except:
-            pass
-        frm = tk.Frame(root)
-        frm.pack(pady=5)
+        except Exception:
+            tk.Label(body, text=self.path.name).pack(pady=12)
+
+        frm = tk.Frame(body)
+        frm.pack(pady=8)
+
         for txt in ('OK', 'Junk', 'Meme'):
-            tk.Button(frm, text=txt,
-                      command=lambda c=txt.lower(): self._set(c, root)).pack(side='left', padx=5)
-        tk.Button(frm, text='Rename', command=lambda: self._rename(root)).pack(side='left', padx=5)
-        tk.Button(frm, text='Change Date Folder', command=lambda: self._change_date(root)).pack(side='left', padx=5)
-        tk.Button(frm, text='Skip Folder', command=lambda: self._set('skip_folder', root)).pack(side='left', padx=5)
-        tk.Button(frm, text='Quit', command=lambda: self._set('quit', root)).pack(side='left', padx=5)
-        root.mainloop()
+            tk.Button(frm, text=txt, width=12,
+                      command=lambda c=txt.lower(): self._set(c, win)).pack(side='left', padx=4)
+        tk.Button(frm, text='Rename', width=14, command=lambda: self._rename(win)).pack(side='left', padx=4)
+        tk.Button(frm, text='Change Date Folder', width=16, command=lambda: self._change_date(win)).pack(side='left', padx=4)
+        tk.Button(frm, text='Skip Folder', width=12, command=lambda: self._set('skip_folder', win)).pack(side='left', padx=4)
+        tk.Button(frm, text='Quit', width=10, command=lambda: self._set('quit', win)).pack(side='left', padx=4)
+
+        win.wait_window()
         return self.choice
 
 
@@ -162,79 +193,72 @@ class DuplicateDialog:
         self.files = files
         self.choice = None
         self.default_index = default_index
+        self._images: list[ImageTk.PhotoImage] = []
 
-    def _set(self, root, choice):
+    def _set(self, win, choice):
         self.choice = choice
-        root.destroy()
+        win.destroy()
 
     def run(self):
-        root = tk.Tk()
-        root.title("Duplicate Found")
+        win = _modal_window('Duplicate Found')
+        win.protocol('WM_DELETE_WINDOW', lambda: self._set(win, 'quit'))
 
-        # grid of thumbnails
+        grid = tk.Frame(win)
+        grid.pack(fill='both', expand=True, padx=10, pady=10)
+
         for idx, file in enumerate(self.files):
-            # draw a blue border if this is the default
             highlight = 2 if idx == self.default_index else 0
             frm = tk.Frame(
-                root,
+                grid,
                 bd=0,
                 highlightthickness=highlight,
-                highlightbackground="blue",
-                highlightcolor="blue",
-                padx=5, pady=5
+                highlightbackground='blue',
+                highlightcolor='blue',
+                padx=5,
+                pady=5
             )
-            frm.grid(row=idx//3, column=idx%3, padx=5, pady=5)
+            frm.grid(row=idx // 3, column=idx % 3, padx=5, pady=5, sticky='n')
 
-            # thumbnail
             try:
                 img = Image.open(file)
-                img.thumbnail((200, 200))
+                img.thumbnail((220, 220))
                 tkimg = ImageTk.PhotoImage(img)
+                self._images.append(tkimg)
                 lbl_img = tk.Label(frm, image=tkimg)
-                lbl_img.image = tkimg
                 lbl_img.pack()
             except Exception:
-                pass
+                tk.Label(frm, text=file.name, wraplength=220).pack()
 
-            # filename, path, and earliest timestamp
             ts = get_earliest_timestamp(file)
             ts_str = datetime.fromtimestamp(ts).strftime('%b %d, %Y %I:%M %p')
-            lbl_txt = tk.Label(frm, text=f"{file.name}\n{file.parent}\n{ts_str}",
-                                justify='center', wraplength=200)
+            lbl_txt = tk.Label(frm, text=f"{file.name}\n{file.parent}\n{ts_str}", justify='center', wraplength=220)
             lbl_txt.pack()
 
-            # “Keep This One” button
-            btn = tk.Button(frm, text="Keep This One",
-                            command=lambda i=idx: self._set(root, f'keep{i}'))
+            btn = tk.Button(frm, text='Keep This One', width=18,
+                            command=lambda i=idx: self._set(win, f'keep{i}'))
             btn.pack(pady=5)
 
-        # bottom controls
-        bot = tk.Frame(root)
-        bot.grid(row=(len(self.files)//3)+1, column=0, columnspan=3, pady=10)
-        tk.Button(bot, text="Keep All",
-                  command=lambda: self._set(root, 'keep_all')
-        ).pack(side='left', padx=5)
-        tk.Button(bot, text="Delete All",
-                  command=lambda: self._set(root, 'delete_all')
-        ).pack(side='left', padx=5)
-        tk.Button(bot, text="Quit",
-                  command=lambda: self._set(root, 'quit')
-        ).pack(side='left', padx=5)
+        bot = tk.Frame(win)
+        bot.pack(pady=10)
+        tk.Button(bot, text='Keep All', width=12, command=lambda: self._set(win, 'keep_all')).pack(side='left', padx=5)
+        tk.Button(bot, text='Delete All', width=12, command=lambda: self._set(win, 'delete_all')).pack(side='left', padx=5)
+        tk.Button(bot, text='Quit', width=12, command=lambda: self._set(win, 'quit')).pack(side='left', padx=5)
 
-        # Enter → default keep
-        root.bind('<Return>', lambda e: self._set(root, f'keep{self.default_index}'))
-
-        root.mainloop()
+        win.bind('<Return>', lambda e: self._set(win, f'keep{self.default_index}'))
+        win.wait_window()
         return self.choice
+
 
 class LiveDialog:
     def __init__(self, path: Path, src: Path):
         self.path = path
         self.src = src
         self.choice = None
-    def _set(self, choice, root):
+
+    def _set(self, choice, win):
         self.choice = choice
-        root.destroy()
+        win.destroy()
+
     def run(self):
         try:
             if platform.system() == 'Darwin':
@@ -245,13 +269,16 @@ class LiveDialog:
                 subprocess.run(['xdg-open', str(self.path)])
         except Exception:
             pass
-        root = tk.Tk()
-        root.title(self.path.name)
-        tk.Label(root, text=f"Review Live Photo: {self.path.name}").pack(pady=10)
-        frm = tk.Frame(root)
-        frm.pack(pady=5)
-        tk.Button(frm, text='Keep', command=lambda: self._set('keep', root)).pack(side='left', padx=5)
-        tk.Button(frm, text='Delete', command=lambda: self._set('delete', root)).pack(side='left', padx=5)
-        tk.Button(frm, text='Quit', command=lambda: self._set('quit', root)).pack(side='left', padx=5)
-        root.mainloop()
+
+        win = _modal_window(self.path.name, width=680, height=240)
+        win.protocol('WM_DELETE_WINDOW', lambda: self._set('quit', win))
+
+        tk.Label(win, text=f'Review Live Photo: {self.path.name}', font=('TkDefaultFont', 12, 'bold')).pack(pady=16)
+        frm = tk.Frame(win)
+        frm.pack(pady=8)
+        tk.Button(frm, text='Keep', width=12, command=lambda: self._set('keep', win)).pack(side='left', padx=5)
+        tk.Button(frm, text='Delete', width=12, command=lambda: self._set('delete', win)).pack(side='left', padx=5)
+        tk.Button(frm, text='Quit', width=12, command=lambda: self._set('quit', win)).pack(side='left', padx=5)
+
+        win.wait_window()
         return self.choice

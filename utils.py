@@ -70,32 +70,45 @@ def cleanup_empty(path: Path, root: Path):
         p = p.parent
 
 
-def choose_folder() -> Path | None:
+def choose_folder(
+    title: str = "Select folder to organize",
+    parent: tk.Misc | None = None,
+    initialdir: str | None = None,
+) -> Path | None:
     """
     Prompt the user with an NSOpenPanel/folder dialog and return the Path.
     """
-    root = tk.Tk()
-    try:
-        root.withdraw()
-        root.update_idletasks()
-        root.update()
+    owns_root = parent is None
+    root = parent
+    if owns_root:
+        root = tk.Tk()
 
-        if platform.system() == 'Darwin':
+    try:
+        if root is not None and owns_root:
+            root.withdraw()
+            root.update_idletasks()
+            root.update()
+
+        kwargs = {
+            'title': title,
+            'mustexist': True,
+        }
+        if initialdir:
+            kwargs['initialdir'] = initialdir
+
+        if platform.system() == 'Darwin' and owns_root:
             # On newer macOS/Tk builds, passing a withdrawn Tk root as parent can
             # cause the chooser to dismiss immediately on click.
-            folder = filedialog.askdirectory(
-                title="Select folder to organize",
-                mustexist=True,
-            )
+            folder = filedialog.askdirectory(**kwargs)
         else:
-            root.lift()
-            root.attributes("-topmost", True)
-            folder = filedialog.askdirectory(
-                title="Select folder to organize",
-                parent=root,
-                mustexist=True,
-            )
+            if root is not None and owns_root:
+                root.lift()
+                root.attributes("-topmost", True)
+            if root is not None:
+                kwargs['parent'] = root
+            folder = filedialog.askdirectory(**kwargs)
     finally:
-        root.destroy()
+        if owns_root and root is not None:
+            root.destroy()
 
     return Path(folder) if folder else None
