@@ -6,7 +6,7 @@ from datetime import datetime
 from PIL import Image, ImageTk
 import subprocess
 import os
-from utils import get_earliest_timestamp, cleanup_empty
+from utils import get_earliest_timestamp, cleanup_empty, activate_app_frontmost
 
 try:
     import pillow_heif
@@ -15,6 +15,10 @@ except ImportError:
     pass
 
 _SHARED_ROOT: tk.Tk | None = None
+
+
+def _bring_to_front(win: tk.Misc):
+    activate_app_frontmost(win)
 
 
 def set_shared_root(root: tk.Tk | None):
@@ -27,6 +31,7 @@ def get_shared_root() -> tk.Tk:
     if _SHARED_ROOT is None or not _SHARED_ROOT.winfo_exists():
         _SHARED_ROOT = tk.Tk()
         _SHARED_ROOT.withdraw()
+    _bring_to_front(_SHARED_ROOT)
     return _SHARED_ROOT
 
 
@@ -45,6 +50,7 @@ def _modal_window(title: str, width: int = 980, height: int = 700) -> tk.Topleve
     win.resizable(False, False)
     win.transient(root)
     win.grab_set()
+    _bring_to_front(win)
     return win
 
 

@@ -1,6 +1,8 @@
 import os
 import platform
 import shutil
+import subprocess
+import time
 import tkinter as tk
 from tkinter import filedialog
 from pathlib import Path
@@ -14,6 +16,8 @@ ALL_EXTS = IMAGE_EXTS | VIDEO_EXTS | {'.aae'}
 
 # ExifTags lookup for screenshots
 SOFTWARE_TAG = next((k for k, v in ExifTags.TAGS.items() if v == 'Software'), None)
+
+_LAST_MAC_ACTIVATE_TS = 0.0
 
 
 def get_earliest_timestamp(path: Path) -> float:
@@ -70,6 +74,40 @@ def cleanup_empty(path: Path, root: Path):
         p = p.parent
 
 
+def activate_app_frontmost(win: tk.Misc | None = None):
+    global _LAST_MAC_ACTIVATE_TS
+
+    if win is not None:
+        try:
+            win.update_idletasks()
+            win.lift()
+            win.attributes('-topmost', True)
+            win.focus_force()
+            win.after(300, lambda: win.attributes('-topmost', False))
+        except Exception:
+            pass
+
+    if platform.system() != 'Darwin':
+        return
+
+    now = time.monotonic()
+    if now - _LAST_MAC_ACTIVATE_TS < 0.8:
+        return
+    _LAST_MAC_ACTIVATE_TS = now
+
+    pid = os.getpid()
+    script = f'tell application "System Events" to set frontmost of (first process whose unix id is {pid}) to true'
+
+    try:
+        subprocess.Popen(
+            ['osascript', '-e', script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+
 def choose_folder(
     title: str = "Select folder to organize",
     parent: tk.Misc | None = None,
@@ -83,11 +121,15 @@ def choose_folder(
     if owns_root:
         root = tk.Tk()
 
+    def _front(win: tk.Misc):
+        activate_app_frontmost(win)
+
     try:
         if root is not None and owns_root:
             root.withdraw()
             root.update_idletasks()
             root.update()
+            _front(root)
 
         kwargs = {
             'title': title,
@@ -99,15 +141,21 @@ def choose_folder(
         if platform.system() == 'Darwin' and owns_root:
             # On newer macOS/Tk builds, passing a withdrawn Tk root as parent can
             # cause the chooser to dismiss immediately on click.
+            if root is not None:
+                _front(root)
             folder = filedialog.askdirectory(**kwargs)
         else:
             if root is not None and owns_root:
-                root.lift()
-                root.attributes("-topmost", True)
+                _front(root)
             if root is not None:
                 kwargs['parent'] = root
             folder = filedialog.askdirectory(**kwargs)
     finally:
+        if root is not None:
+            try:
+                root.attributes('-topmost', False)
+            except Exception:
+                pass
         if owns_root and root is not None:
             root.destroy()
 

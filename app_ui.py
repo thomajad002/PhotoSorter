@@ -10,7 +10,7 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 
-from utils import choose_folder
+from utils import choose_folder, activate_app_frontmost
 from sort_logic import sort_files, strong_sort, find_duplicates, handle_live, sort_files_copy
 from diologs import set_shared_root
 
@@ -74,6 +74,7 @@ class PhotoSorterApp:
 
         self._build_ui()
         self._toggle_dest_visibility()
+        self.root.after(0, lambda: activate_app_frontmost(self.root))
 
     def _open_in_system_file_browser(self, folder: Path):
         if platform.system() == 'Darwin':

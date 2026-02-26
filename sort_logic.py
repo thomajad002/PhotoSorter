@@ -119,6 +119,234 @@ def handle_backup_folders(src: Path):
             cleanup_empty(folder, src)
 
 
+def _find_nested_year_folders(src: Path) -> list[Path]:
+    nested_years: list[Path] = []
+
+    for dirpath, _, _ in os.walk(src):
+        folder = Path(dirpath)
+        if folder == src:
+            continue
+        if YEAR_PATTERN.match(folder.name) and folder.parent != src:
+            nested_years.append(folder)
+
+    nested_years.sort(key=lambda p: len(p.parts), reverse=True)
+    return nested_years
+
+
+def _merge_folder_contents(source_dir: Path, dest_dir: Path, root: Path):
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    for child in list(source_dir.iterdir()):
+        dest_child = dest_dir / child.name
+
+        if child.is_dir() and dest_child.exists() and dest_child.is_dir():
+            _merge_folder_contents(child, dest_child, root)
+            cleanup_empty(child, root)
+            continue
+
+        if dest_child.exists():
+            target = _safe_copy_target(dest_child)
+            shutil.move(str(child), str(target))
+        else:
+            shutil.move(str(child), str(dest_child))
+
+    cleanup_empty(source_dir, root)
+
+
+def prompt_and_merge_nested_year_folders(src: Path):
+    nested_years = _find_nested_year_folders(src)
+    if not nested_years:
+        return
+
+    sample_paths = '\n'.join(
+        f"- {folder.relative_to(src)}"
+        for folder in nested_years[:8]
+    )
+    more = '' if len(nested_years) <= 8 else f"\n...and {len(nested_years) - 8} more"
+
+    should_move = messagebox.askyesno(
+        'Nested Year Folders Found',
+        (
+            'Found year folders inside deeper directories:\n\n'
+            f'{sample_paths}{more}\n\n'
+            'Move these year folders to the source root and merge matching year/month folders?'
+        ),
+        parent=get_shared_root(),
+    )
+
+    if not should_move:
+        print('Keeping nested year folders in place.')
+        return
+
+    for year_folder in nested_years:
+        if not year_folder.exists() or year_folder.parent == src:
+            continue
+
+        year_dest = src / year_folder.name
+
+        try:
+            if year_dest.exists() and year_dest.is_dir():
+                _merge_folder_contents(year_folder, year_dest, src)
+            elif year_dest.exists():
+                fallback_target = _safe_copy_target(year_dest)
+                shutil.move(str(year_folder), str(fallback_target))
+            else:
+                shutil.move(str(year_folder), str(year_dest))
+
+            cleanup_empty(year_folder.parent, src)
+        except OSError:
+            continue
+
+
+def _find_nested_named_folders(src: Path, folder_name: str) -> list[Path]:
+    nested_folders: list[Path] = []
+
+    for dirpath, _, _ in os.walk(src):
+        folder = Path(dirpath)
+        if folder == src:
+            continue
+        if folder.name == folder_name and folder.parent != src:
+            nested_folders.append(folder)
+
+    nested_folders.sort(key=lambda p: len(p.parts), reverse=True)
+    return nested_folders
+
+
+def prompt_and_merge_nested_screenshots_folders(src: Path):
+    nested_screenshots = _find_nested_named_folders(src, 'Screenshots')
+    if not nested_screenshots:
+        return
+
+    sample_paths = '\n'.join(
+        f"- {folder.relative_to(src)}"
+        for folder in nested_screenshots[:8]
+    )
+    more = '' if len(nested_screenshots) <= 8 else f"\n...and {len(nested_screenshots) - 8} more"
+
+    should_move = messagebox.askyesno(
+        'Nested Screenshots Folders Found',
+        (
+            'Found Screenshots folders inside deeper directories:\n\n'
+            f'{sample_paths}{more}\n\n'
+            'Move and merge these into the source root Screenshots folder?'
+        ),
+        parent=get_shared_root(),
+    )
+
+    if not should_move:
+        print('Keeping nested Screenshots folders in place.')
+        return
+
+    screenshots_dest = src / 'Screenshots'
+
+    for screenshots_folder in nested_screenshots:
+        if not screenshots_folder.exists() or screenshots_folder.parent == src:
+            continue
+
+        try:
+            if screenshots_dest.exists() and screenshots_dest.is_dir():
+                _merge_folder_contents(screenshots_folder, screenshots_dest, src)
+            elif screenshots_dest.exists():
+                fallback_target = _safe_copy_target(screenshots_dest)
+                shutil.move(str(screenshots_folder), str(fallback_target))
+            else:
+                shutil.move(str(screenshots_folder), str(screenshots_dest))
+
+            cleanup_empty(screenshots_folder.parent, src)
+        except OSError:
+            continue
+
+
+def prompt_and_merge_nested_screenrecordings_folders(src: Path):
+    nested_recordings = _find_nested_named_folders(src, 'ScreenRecordings')
+    if not nested_recordings:
+        return
+
+    sample_paths = '\n'.join(
+        f"- {folder.relative_to(src)}"
+        for folder in nested_recordings[:8]
+    )
+    more = '' if len(nested_recordings) <= 8 else f"\n...and {len(nested_recordings) - 8} more"
+
+    should_move = messagebox.askyesno(
+        'Nested ScreenRecordings Folders Found',
+        (
+            'Found ScreenRecordings folders inside deeper directories:\n\n'
+            f'{sample_paths}{more}\n\n'
+            'Move and merge these into the source root ScreenRecordings folder?'
+        ),
+        parent=get_shared_root(),
+    )
+
+    if not should_move:
+        print('Keeping nested ScreenRecordings folders in place.')
+        return
+
+    recordings_dest = src / 'ScreenRecordings'
+
+    for recordings_folder in nested_recordings:
+        if not recordings_folder.exists() or recordings_folder.parent == src:
+            continue
+
+        try:
+            if recordings_dest.exists() and recordings_dest.is_dir():
+                _merge_folder_contents(recordings_folder, recordings_dest, src)
+            elif recordings_dest.exists():
+                fallback_target = _safe_copy_target(recordings_dest)
+                shutil.move(str(recordings_folder), str(fallback_target))
+            else:
+                shutil.move(str(recordings_folder), str(recordings_dest))
+
+            cleanup_empty(recordings_folder.parent, src)
+        except OSError:
+            continue
+
+
+def prompt_and_merge_nested_memes_folders(src: Path):
+    nested_memes = _find_nested_named_folders(src, 'Memes')
+    if not nested_memes:
+        return
+
+    sample_paths = '\n'.join(
+        f"- {folder.relative_to(src)}"
+        for folder in nested_memes[:8]
+    )
+    more = '' if len(nested_memes) <= 8 else f"\n...and {len(nested_memes) - 8} more"
+
+    should_move = messagebox.askyesno(
+        'Nested Memes Folders Found',
+        (
+            'Found Memes folders inside deeper directories:\n\n'
+            f'{sample_paths}{more}\n\n'
+            'Move and merge these into the source root Memes folder?'
+        ),
+        parent=get_shared_root(),
+    )
+
+    if not should_move:
+        print('Keeping nested Memes folders in place.')
+        return
+
+    memes_dest = src / 'Memes'
+
+    for memes_folder in nested_memes:
+        if not memes_folder.exists() or memes_folder.parent == src:
+            continue
+
+        try:
+            if memes_dest.exists() and memes_dest.is_dir():
+                _merge_folder_contents(memes_folder, memes_dest, src)
+            elif memes_dest.exists():
+                fallback_target = _safe_copy_target(memes_dest)
+                shutil.move(str(memes_folder), str(fallback_target))
+            else:
+                shutil.move(str(memes_folder), str(memes_dest))
+
+            cleanup_empty(memes_folder.parent, src)
+        except OSError:
+            continue
+
+
 def apply_choice_to_folder(entry: Path, root: Path, choice: str):
     """
     Move every image/video under `entry`:
@@ -248,6 +476,18 @@ def sort_files(src: Path):
 
     # 3) Auto-handle all backup‐style folders
     handle_backup_folders(src)
+
+    # 3b) Offer to elevate nested year folders into the root (with merge)
+    prompt_and_merge_nested_year_folders(src)
+
+    # 3c) Offer to merge nested Screenshots folders into root Screenshots
+    prompt_and_merge_nested_screenshots_folders(src)
+
+    # 3d) Offer to merge nested ScreenRecordings folders into root ScreenRecordings
+    prompt_and_merge_nested_screenrecordings_folders(src)
+
+    # 3e) Offer to merge nested Memes folders into root Memes
+    prompt_and_merge_nested_memes_folders(src)
 
     skipped_roots: set[str] = set()
 
