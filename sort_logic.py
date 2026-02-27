@@ -10,12 +10,12 @@ from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
 
-from utils       import IMAGE_EXTS, VIDEO_EXTS, safe_mkdir, cleanup_empty, get_earliest_timestamp
+from utils       import IMAGE_EXTS, VIDEO_EXTS, DOCUMENT_EXTS, safe_mkdir, cleanup_empty, get_earliest_timestamp
 from detectors   import BACKUP_PATTERN, parse_backup_date, is_screenshot, is_screen_recording, infer_backup_date
 from diologs     import FolderDialog, DecisionDialog, DuplicateDialog, LiveDialog, get_shared_root
 
 # Folders we generate ourselves—never ask on these, but do descend into them.
-GENERATED_FOLDERS = {'Screenshots', 'ScreenRecordings', 'Memes'}
+GENERATED_FOLDERS = {'Screenshots', 'ScreenRecordings', 'Memes', 'Documents'}
 YEAR_PATTERN      = re.compile(r'^\d{4}$')
 MONTH_PATTERN     = re.compile(r'^\d{2}-[A-Za-z]+$')   # e.g. "04-April", "11-November"
 
@@ -81,11 +81,13 @@ def handle_backup_folders(src: Path):
             if not file.is_file():
                 continue
             ext = file.suffix.lower()
-            if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+            if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS and ext not in DOCUMENT_EXTS:
                 continue
 
+            if ext in DOCUMENT_EXTS:
+                dest = src / 'Documents'
             # Always extract screenshots & recordings
-            if is_screenshot(file):
+            elif is_screenshot(file):
                 dest = src / 'Screenshots'
             elif is_screen_recording(file):
                 dest = src / 'ScreenRecordings'
@@ -500,7 +502,7 @@ def apply_choice_to_folder(entry: Path, root: Path, choice: str):
         if not file.is_file() or file.name.startswith('._'):
             continue
         ext = file.suffix.lower()
-        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS and ext not in DOCUMENT_EXTS:
             continue
 
         # --- SPECIAL-CASE generated folders so they NEVER nest ---
@@ -509,7 +511,9 @@ def apply_choice_to_folder(entry: Path, root: Path, choice: str):
 
         # --- otherwise, your usual destination logic ---
         else:
-            if is_screenshot(file):
+            if ext in DOCUMENT_EXTS:
+                dest = target / 'Documents'
+            elif is_screenshot(file):
                 dest = target / 'Screenshots'
             elif is_screen_recording(file):
                 dest = target / 'ScreenRecordings'
@@ -595,11 +599,13 @@ def sort_files(src: Path):
         if not file.is_file():
             continue
         ext = file.suffix.lower()
-        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+        if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS and ext not in DOCUMENT_EXTS:
             continue
 
         # decide destination
-        if is_screenshot(file):
+        if ext in DOCUMENT_EXTS:
+            dest = src / 'Documents'
+        elif is_screenshot(file):
             dest = src / 'Screenshots'
         elif is_screen_recording(file):
             dest = src / 'ScreenRecordings'
@@ -663,7 +669,7 @@ def sort_files(src: Path):
 
         # e) skip & delete if empty
         media_here = any(
-            (folder / fn).suffix.lower() in IMAGE_EXTS | VIDEO_EXTS
+            (folder / fn).suffix.lower() in IMAGE_EXTS | VIDEO_EXTS | DOCUMENT_EXTS
             for fn in filenames
         )
         if not media_here:
@@ -692,10 +698,12 @@ def sort_files(src: Path):
             if any(BACKUP_PATTERN.match(p) for p in file.relative_to(src).parts):
                 continue
             ext = file.suffix.lower()
-            if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS:
+            if ext not in IMAGE_EXTS and ext not in VIDEO_EXTS and ext not in DOCUMENT_EXTS:
                 continue
 
-            if is_screenshot(file):
+            if ext in DOCUMENT_EXTS:
+                dest = src / 'Documents'
+            elif is_screenshot(file):
                 dest = src / 'Screenshots'
             elif is_screen_recording(file):
                 dest = src / 'ScreenRecordings'

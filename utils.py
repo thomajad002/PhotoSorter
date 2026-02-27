@@ -12,7 +12,12 @@ from PIL import ExifTags
 # Supported extensions, including GoPro low-res preview files (.lrv)
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.heic', '.heif', '.tiff'}
 VIDEO_EXTS = {'.mp4', '.mov', '.avi', '.mkv', '.lrv', '.3gp', '.m2ts', '.webm', '.wmv'}
-ALL_EXTS = IMAGE_EXTS | VIDEO_EXTS | {'.aae'}
+DOCUMENT_EXTS = {
+    '.pdf', '.txt', '.rtf', '.doc', '.docx', '.odt', '.pages',
+    '.xls', '.xlsx', '.ods', '.numbers', '.ppt', '.pptx', '.odp', '.key',
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.tgz', '.tbz2', '.iso', '.dmg', '.pkg', '.xip',
+}
+ALL_EXTS = IMAGE_EXTS | VIDEO_EXTS | DOCUMENT_EXTS | {'.aae'}
 
 # ExifTags lookup for screenshots
 SOFTWARE_TAG = next((k for k, v in ExifTags.TAGS.items() if v == 'Software'), None)

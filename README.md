@@ -12,9 +12,11 @@ YYYY/
   MM-Month/
 Screenshots/
 ScreenRecordings/
+Documents/
 ```
 It:
 - Detects screenshots and screen recordings.
+- Moves supported document and archive files (like PDFs, Office docs, text files, ZIP/RAR/7z/tar variants, ISO/DMG disk images, PKG/XIP installers) into `Documents/`.
 - Handles “backup” dated folders intelligently (various date-name formats).
 - Optionally performs an interactive review (“strong sort”) to flag Junk or Memes and rename/move items. (Might be too overwelming if done with too many photos)
 - Detects duplicate images and lets you pick which to keep.
@@ -37,6 +39,7 @@ Core modules:
 | Backup folder handling | Keeps files in place if folder date matches earliest creation date; otherwise redistributes |
 | Screenshot extraction | PNGs and images whose EXIF Software tag contains “screen” go to `Screenshots/` |
 | Screen recording extraction | Video metadata / filename heuristics → `ScreenRecordings/` |
+| Document routing | Supported docs and archives (`.pdf`, `.docx`, `.txt`, `.zip`, `.rar`, `.7z`, `.iso`, `.dmg`, `.pkg`, `.xip`, etc.) → `Documents/` (no date subfolders) |
 | Interactive folder decisions | Prompts for ambiguous / legacy folders |
 | Nested year folder recovery | Detects year folders buried in deeper paths and can move/merge them into root year folders |
 | Strong review pass | Image-by-image triage: Keep / Junk / Meme / Rename / Move date |
@@ -183,31 +186,32 @@ Note for macOS (especially newer Apple Silicon systems):
    ```
 3. Screenshots → `<root>/Screenshots/`
 4. Screen recordings → `<root>/ScreenRecordings/`
-5. Backup-style folders (matching [`BACKUP_PATTERN`](detectors.py)) are analyzed:
+5. Supported documents and archives → `<root>/Documents/` (no date subfolders)
+6. Backup-style folders (matching [`BACKUP_PATTERN`](detectors.py)) are analyzed:
    - Folder names like: `09-07-21`, `09-07-2021`, `2021-09-07`, `2021-09`, `09-2021`, with `-` or `_`.
    - If a “majority date” ( >50% of files match same actual day inside a month folder) is inferred via [`infer_backup_date`](detectors.py), that date is preserved; otherwise files are redistributed by real timestamp.
    - Remaining backup folder (if date resolved) is moved under its year: `YEAR/<original-backup-folder>`; else deleted if emptied.
-6. If legacy folders like `2019_copy1` or `02-February_copy1` exist, PhotoSorter asks once whether to merge them back into their base year/month folders.
+7. If legacy folders like `2019_copy1` or `02-February_copy1` exist, PhotoSorter asks once whether to merge them back into their base year/month folders.
    - Choosing **Yes** merges into canonical folders (single `YYYY` and month folders).
    - Choosing **No** leaves legacy `_copy` folders where they are.
-7. If year folders are found in deeper paths (for example `old_photos/2020`), PhotoSorter asks once whether to move them to root.
+8. If year folders are found in deeper paths (for example `old_photos/2020`), PhotoSorter asks once whether to move them to root.
    - Choosing **Yes** moves them into `<root>/YYYY` and merges existing year/month folders.
    - Folder name collisions are merged in place (single `YYYY` / month folder structure).
    - File name collisions keep both files by renaming only the incoming file when needed.
    - Choosing **No** leaves those nested year folders where they are.
-8. If nested `Screenshots` folders are found (for example `old_dump/Screenshots`), PhotoSorter asks once whether to merge them into `<root>/Screenshots`.
+9. If nested `Screenshots` folders are found (for example `old_dump/Screenshots`), PhotoSorter asks once whether to merge them into `<root>/Screenshots`.
    - Choosing **Yes** merges recursively into one folder (no `_copy` folder names).
    - Choosing **No** leaves nested `Screenshots` folders where they are.
-9. If nested `ScreenRecordings` folders are found, PhotoSorter asks once whether to merge them into `<root>/ScreenRecordings`.
+10. If nested `ScreenRecordings` folders are found, PhotoSorter asks once whether to merge them into `<root>/ScreenRecordings`.
    - Choosing **Yes** merges recursively into one folder (no `_copy` folder names).
    - Choosing **No** leaves nested `ScreenRecordings` folders where they are.
-10. If nested `Memes` folders are found, PhotoSorter asks once whether to merge them into `<root>/Memes`.
+11. If nested `Memes` folders are found, PhotoSorter asks once whether to merge them into `<root>/Memes`.
    - Choosing **Yes** merges recursively into one folder (no `_copy` folder names).
    - Choosing **No** leaves nested `Memes` folders where they are.
-11. Remaining subfolders walked depth-first; unknown folders prompt a decision dialog (`FolderDialog`).
-12. Optional strong pass (`strong_sort`) displays each image for review (`DecisionDialog`).
-13. Live Photo videos (`*-Live.mov`) optionally handled via `--live` (`LiveDialog`).
-14. Duplicate detection (`find_duplicates`):
+12. Remaining subfolders walked depth-first; unknown folders prompt a decision dialog (`FolderDialog`).
+13. Optional strong pass (`strong_sort`) displays each image for review (`DecisionDialog`).
+14. Live Photo videos (`*-Live.mov`) optionally handled via `--live` (`LiveDialog`).
+15. Duplicate detection (`find_duplicates`):
    - Groups by size, then MD5 hash via multiprocessing.
    - Default pick determined by [`choose_default_duplicate`](sort_logic.py) scoring:
      - Original vs addon names (addon patterns: `(n)`, trailing digits, `-Live`)
