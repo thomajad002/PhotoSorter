@@ -187,23 +187,27 @@ Note for macOS (especially newer Apple Silicon systems):
    - Folder names like: `09-07-21`, `09-07-2021`, `2021-09-07`, `2021-09`, `09-2021`, with `-` or `_`.
    - If a “majority date” ( >50% of files match same actual day inside a month folder) is inferred via [`infer_backup_date`](detectors.py), that date is preserved; otherwise files are redistributed by real timestamp.
    - Remaining backup folder (if date resolved) is moved under its year: `YEAR/<original-backup-folder>`; else deleted if emptied.
-6. If year folders are found in deeper paths (for example `old_photos/2020`), PhotoSorter asks once whether to move them to root.
+6. If legacy folders like `2019_copy1` or `02-February_copy1` exist, PhotoSorter asks once whether to merge them back into their base year/month folders.
+   - Choosing **Yes** merges into canonical folders (single `YYYY` and month folders).
+   - Choosing **No** leaves legacy `_copy` folders where they are.
+7. If year folders are found in deeper paths (for example `old_photos/2020`), PhotoSorter asks once whether to move them to root.
    - Choosing **Yes** moves them into `<root>/YYYY` and merges existing year/month folders.
-   - Name collisions are preserved by creating copy-style names rather than overwriting files.
+   - Folder name collisions are merged in place (single `YYYY` / month folder structure).
+   - File name collisions keep both files by renaming only the incoming file when needed.
    - Choosing **No** leaves those nested year folders where they are.
-7. If nested `Screenshots` folders are found (for example `old_dump/Screenshots`), PhotoSorter asks once whether to merge them into `<root>/Screenshots`.
-   - Choosing **Yes** merges recursively and preserves name collisions with copy-style names.
+8. If nested `Screenshots` folders are found (for example `old_dump/Screenshots`), PhotoSorter asks once whether to merge them into `<root>/Screenshots`.
+   - Choosing **Yes** merges recursively into one folder (no `_copy` folder names).
    - Choosing **No** leaves nested `Screenshots` folders where they are.
-8. If nested `ScreenRecordings` folders are found, PhotoSorter asks once whether to merge them into `<root>/ScreenRecordings`.
-   - Choosing **Yes** merges recursively and preserves name collisions with copy-style names.
+9. If nested `ScreenRecordings` folders are found, PhotoSorter asks once whether to merge them into `<root>/ScreenRecordings`.
+   - Choosing **Yes** merges recursively into one folder (no `_copy` folder names).
    - Choosing **No** leaves nested `ScreenRecordings` folders where they are.
-9. If nested `Memes` folders are found, PhotoSorter asks once whether to merge them into `<root>/Memes`.
-   - Choosing **Yes** merges recursively and preserves name collisions with copy-style names.
+10. If nested `Memes` folders are found, PhotoSorter asks once whether to merge them into `<root>/Memes`.
+   - Choosing **Yes** merges recursively into one folder (no `_copy` folder names).
    - Choosing **No** leaves nested `Memes` folders where they are.
-10. Remaining subfolders walked depth-first; unknown folders prompt a decision dialog (`FolderDialog`).
-11. Optional strong pass (`strong_sort`) displays each image for review (`DecisionDialog`).
-12. Live Photo videos (`*-Live.mov`) optionally handled via `--live` (`LiveDialog`).
-13. Duplicate detection (`find_duplicates`):
+11. Remaining subfolders walked depth-first; unknown folders prompt a decision dialog (`FolderDialog`).
+12. Optional strong pass (`strong_sort`) displays each image for review (`DecisionDialog`).
+13. Live Photo videos (`*-Live.mov`) optionally handled via `--live` (`LiveDialog`).
+14. Duplicate detection (`find_duplicates`):
    - Groups by size, then MD5 hash via multiprocessing.
    - Default pick determined by [`choose_default_duplicate`](sort_logic.py) scoring:
      - Original vs addon names (addon patterns: `(n)`, trailing digits, `-Live`)

@@ -133,22 +133,159 @@ def _find_nested_year_folders(src: Path) -> list[Path]:
     return nested_years
 
 
+def _canonical_month_name(name: str) -> str:
+    match = re.fullmatch(r'(\d{1,2})-([A-Za-z]+)', name)
+    if not match:
+        return name
+
+    month_num = int(match.group(1))
+    if month_num < 1 or month_num > 12:
+        return name
+
+    return f'{month_num:02d}-{match.group(2)}'
+
+
+def _files_identical(first: Path, second: Path) -> bool:
+    try:
+        if first.stat().st_size != second.stat().st_size:
+            return False
+    except OSError:
+        return False
+
+    digest_a = hashlib.md5()
+    digest_b = hashlib.md5()
+
+    try:
+        with open(first, 'rb') as fp_a, open(second, 'rb') as fp_b:
+            while True:
+                chunk_a = fp_a.read(8192)
+                chunk_b = fp_b.read(8192)
+                if not chunk_a and not chunk_b:
+                    break
+                digest_a.update(chunk_a)
+                digest_b.update(chunk_b)
+    except OSError:
+        return False
+
+    return digest_a.digest() == digest_b.digest()
+
+
+def _base_name_without_copy_suffix(name: str) -> str | None:
+    match = re.fullmatch(r'(.+)_copy\d+', name)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _find_legacy_copy_folders(src: Path) -> list[Path]:
+    legacy_folders: list[Path] = []
+
+    for dirpath, _, _ in os.walk(src):
+        folder = Path(dirpath)
+        if folder == src:
+            continue
+
+        base_name = _base_name_without_copy_suffix(folder.name)
+        if not base_name:
+            continue
+
+        is_year_copy = YEAR_PATTERN.match(base_name) is not None
+        is_month_copy = MONTH_PATTERN.match(base_name) is not None
+        if not is_year_copy and not is_month_copy:
+            continue
+
+        legacy_folders.append(folder)
+
+    legacy_folders.sort(key=lambda p: len(p.parts), reverse=True)
+    return legacy_folders
+
+
+def prompt_and_cleanup_legacy_copy_folders(src: Path):
+    legacy_folders = _find_legacy_copy_folders(src)
+    if not legacy_folders:
+        return
+
+    sample_paths = '\n'.join(
+        f"- {folder.relative_to(src)}"
+        for folder in legacy_folders[:10]
+    )
+    more = '' if len(legacy_folders) <= 10 else f"\n...and {len(legacy_folders) - 10} more"
+
+    should_cleanup = messagebox.askyesno(
+        'Legacy Copy Folders Found',
+        (
+            'Found year/month folders created with _copy suffix:\n\n'
+            f'{sample_paths}{more}\n\n'
+            'Merge these back into their base year/month folders now?'
+        ),
+        parent=get_shared_root(),
+    )
+
+    if not should_cleanup:
+        print('Keeping legacy _copy folders in place.')
+        return
+
+    for copy_folder in legacy_folders:
+        if not copy_folder.exists() or not copy_folder.is_dir():
+            continue
+
+        base_name = _base_name_without_copy_suffix(copy_folder.name)
+        if not base_name:
+            continue
+
+        canonical_base_name = _canonical_month_name(base_name)
+        target_folder = copy_folder.parent / canonical_base_name
+
+        try:
+            if target_folder.exists() and target_folder.is_dir():
+                _merge_folder_contents(copy_folder, target_folder, src)
+            elif target_folder.exists():
+                conflict_target = _safe_copy_target(target_folder.with_name(f'{target_folder.stem}_file{target_folder.suffix}'))
+                shutil.move(str(target_folder), str(conflict_target))
+                shutil.move(str(copy_folder), str(target_folder))
+            else:
+                shutil.move(str(copy_folder), str(target_folder))
+
+            cleanup_empty(copy_folder.parent, src)
+        except OSError:
+            continue
+
+
 def _merge_folder_contents(source_dir: Path, dest_dir: Path, root: Path):
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     for child in list(source_dir.iterdir()):
-        dest_child = dest_dir / child.name
+        child_name = _canonical_month_name(child.name) if child.is_dir() else child.name
+        dest_child = dest_dir / child_name
 
-        if child.is_dir() and dest_child.exists() and dest_child.is_dir():
-            _merge_folder_contents(child, dest_child, root)
-            cleanup_empty(child, root)
+        if child.is_dir():
+            if dest_child.exists() and dest_child.is_file():
+                conflict_target = _safe_copy_target(dest_child.with_name(f'{dest_child.stem}_file{dest_child.suffix}'))
+                shutil.move(str(dest_child), str(conflict_target))
+
+            if dest_child.exists() and dest_child.is_dir():
+                _merge_folder_contents(child, dest_child, root)
+                cleanup_empty(child, root)
+                continue
+
+            shutil.move(str(child), str(dest_child))
             continue
 
-        if dest_child.exists():
-            target = _safe_copy_target(dest_child)
-            shutil.move(str(child), str(target))
-        else:
-            shutil.move(str(child), str(dest_child))
+        if dest_child.exists() and dest_child.is_dir():
+            file_target = _safe_copy_target(dest_child / child.name)
+            shutil.move(str(child), str(file_target))
+            continue
+
+        if dest_child.exists() and dest_child.is_file():
+            if _files_identical(child, dest_child):
+                send2trash(str(child))
+                cleanup_empty(child.parent, root)
+            else:
+                file_target = _safe_copy_target(dest_child)
+                shutil.move(str(child), str(file_target))
+            continue
+
+        shutil.move(str(child), str(dest_child))
 
     cleanup_empty(source_dir, root)
 
@@ -188,8 +325,9 @@ def prompt_and_merge_nested_year_folders(src: Path):
             if year_dest.exists() and year_dest.is_dir():
                 _merge_folder_contents(year_folder, year_dest, src)
             elif year_dest.exists():
-                fallback_target = _safe_copy_target(year_dest)
-                shutil.move(str(year_folder), str(fallback_target))
+                conflict_target = _safe_copy_target(year_dest.with_name(f'{year_dest.stem}_file{year_dest.suffix}'))
+                shutil.move(str(year_dest), str(conflict_target))
+                shutil.move(str(year_folder), str(year_dest))
             else:
                 shutil.move(str(year_folder), str(year_dest))
 
@@ -247,8 +385,9 @@ def prompt_and_merge_nested_screenshots_folders(src: Path):
             if screenshots_dest.exists() and screenshots_dest.is_dir():
                 _merge_folder_contents(screenshots_folder, screenshots_dest, src)
             elif screenshots_dest.exists():
-                fallback_target = _safe_copy_target(screenshots_dest)
-                shutil.move(str(screenshots_folder), str(fallback_target))
+                conflict_target = _safe_copy_target(screenshots_dest.with_name(f'{screenshots_dest.stem}_file{screenshots_dest.suffix}'))
+                shutil.move(str(screenshots_dest), str(conflict_target))
+                shutil.move(str(screenshots_folder), str(screenshots_dest))
             else:
                 shutil.move(str(screenshots_folder), str(screenshots_dest))
 
@@ -292,8 +431,9 @@ def prompt_and_merge_nested_screenrecordings_folders(src: Path):
             if recordings_dest.exists() and recordings_dest.is_dir():
                 _merge_folder_contents(recordings_folder, recordings_dest, src)
             elif recordings_dest.exists():
-                fallback_target = _safe_copy_target(recordings_dest)
-                shutil.move(str(recordings_folder), str(fallback_target))
+                conflict_target = _safe_copy_target(recordings_dest.with_name(f'{recordings_dest.stem}_file{recordings_dest.suffix}'))
+                shutil.move(str(recordings_dest), str(conflict_target))
+                shutil.move(str(recordings_folder), str(recordings_dest))
             else:
                 shutil.move(str(recordings_folder), str(recordings_dest))
 
@@ -337,8 +477,9 @@ def prompt_and_merge_nested_memes_folders(src: Path):
             if memes_dest.exists() and memes_dest.is_dir():
                 _merge_folder_contents(memes_folder, memes_dest, src)
             elif memes_dest.exists():
-                fallback_target = _safe_copy_target(memes_dest)
-                shutil.move(str(memes_folder), str(fallback_target))
+                conflict_target = _safe_copy_target(memes_dest.with_name(f'{memes_dest.stem}_file{memes_dest.suffix}'))
+                shutil.move(str(memes_dest), str(conflict_target))
+                shutil.move(str(memes_folder), str(memes_dest))
             else:
                 shutil.move(str(memes_folder), str(memes_dest))
 
@@ -476,6 +617,9 @@ def sort_files(src: Path):
 
     # 3) Auto-handle all backup‐style folders
     handle_backup_folders(src)
+
+    # 3a) One-time cleanup option for legacy *_copy year/month folders
+    prompt_and_cleanup_legacy_copy_folders(src)
 
     # 3b) Offer to elevate nested year folders into the root (with merge)
     prompt_and_merge_nested_year_folders(src)
