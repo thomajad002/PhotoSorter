@@ -131,10 +131,10 @@ The home screen also includes:
 - A live status log panel that shows operation output in real time
 
 For copy-then-sort, pick:
-1) Source folder (originals stay untouched)
+1) Source folder **or** multiple files (originals stay untouched)
 2) Destination root folder
 
-PhotoSorter copies the source folder, flattens that copied folder into the destination root, then runs normal sorting on the destination root.
+PhotoSorter copies the selected source folder content (or selected files) into the destination root, then runs normal sorting on the destination root.
 
 ### CLI usage (still supported)
 Use flags to run directly without the home screen:

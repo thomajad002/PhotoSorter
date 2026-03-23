@@ -165,3 +165,54 @@ def choose_folder(
             root.destroy()
 
     return Path(folder) if folder else None
+
+
+def choose_files(
+    title: str = "Select files to copy and sort",
+    parent: tk.Misc | None = None,
+    initialdir: str | None = None,
+) -> list[Path]:
+    """
+    Prompt the user with a multi-file picker and return selected file Paths.
+    """
+    owns_root = parent is None
+    root = parent
+    if owns_root:
+        root = tk.Tk()
+
+    def _front(win: tk.Misc):
+        activate_app_frontmost(win)
+
+    try:
+        if root is not None and owns_root:
+            root.withdraw()
+            root.update_idletasks()
+            root.update()
+            _front(root)
+
+        kwargs = {
+            'title': title,
+        }
+        if initialdir:
+            kwargs['initialdir'] = initialdir
+
+        if platform.system() == 'Darwin' and owns_root:
+            if root is not None:
+                _front(root)
+            selected = filedialog.askopenfilenames(**kwargs)
+        else:
+            if root is not None and owns_root:
+                _front(root)
+            if root is not None:
+                kwargs['parent'] = root
+            selected = filedialog.askopenfilenames(**kwargs)
+    finally:
+        if root is not None:
+            try:
+                root.attributes('-topmost', False)
+            except Exception:
+                pass
+        if owns_root and root is not None:
+            root.destroy()
+
+    return [Path(p) for p in selected] if selected else []

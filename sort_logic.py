@@ -781,6 +781,31 @@ def sort_files_copy(src: Path, dest_root: Path) -> Path:
     return dest_root_resolved
 
 
+def sort_selected_files_copy(files: list[Path], dest_root: Path) -> Path:
+    if not files:
+        raise ValueError('At least one file must be selected.')
+
+    dest_root_resolved = dest_root.resolve()
+    if not dest_root_resolved.exists() or not dest_root_resolved.is_dir():
+        raise ValueError('Destination root must exist and be a directory.')
+
+    copied_any = False
+    for raw_file in files:
+        file = raw_file.expanduser()
+        if not file.exists() or not file.is_file():
+            continue
+
+        target = _safe_copy_target(dest_root_resolved / file.name)
+        shutil.copy2(file, target)
+        copied_any = True
+
+    if not copied_any:
+        raise ValueError('No valid files were selected for copying.')
+
+    sort_files(dest_root_resolved)
+    return dest_root_resolved
+
+
 
 def handle_live(src: Path):
     for file in src.rglob('*-Live.mov'):

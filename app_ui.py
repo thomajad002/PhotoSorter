@@ -10,8 +10,8 @@ from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 from pathlib import Path
 
-from utils import choose_folder, activate_app_frontmost
-from sort_logic import sort_files, strong_sort, find_duplicates, handle_live, sort_files_copy
+from utils import choose_folder, choose_files, activate_app_frontmost
+from sort_logic import sort_files, strong_sort, find_duplicates, handle_live, sort_files_copy, sort_selected_files_copy
 from diologs import set_shared_root
 
 
@@ -64,8 +64,10 @@ class PhotoSorterApp:
 
         self.feature_var = tk.StringVar(value='sort')
         self.src_var = tk.StringVar()
+        self.selected_files_var = tk.StringVar(value='No files selected')
         self.dest_var = tk.StringVar()
         self.status_var = tk.StringVar(value='Ready')
+        self.selected_copy_files: list[Path] = []
 
         self.is_running = False
         self._event_queue: queue.Queue[tuple[str, str]] = queue.Queue()
@@ -111,7 +113,7 @@ class PhotoSorterApp:
             'Review Live Photos:\n'
             '- Steps through *-Live.mov files so you can keep or delete each one.\n\n'
             'Copy then sort into a second location:\n'
-            '- Copies source content into destination root and sorts there, so originals stay untouched.'
+            '- Copies a source folder OR selected files into destination root and sorts there, so originals stay untouched.'
         )
         messagebox.showinfo('Feature Help', help_text, parent=self.root)
 
@@ -192,6 +194,9 @@ class PhotoSorterApp:
         self.src_open_button.grid(row=1, column=2, padx=(8, 0), pady=(2, 0))
         self._interactive_widgets.append(self.src_open_button)
 
+        self.selected_files_label = tk.Label(path_frame, text='Selected files (copy mode):')
+        self.selected_files_value = tk.Label(path_frame, textvariable=self.selected_files_var, anchor='w')
+
         self.dest_label = tk.Label(path_frame, text='Destination root (for copy):')
         self.dest_entry = tk.Entry(path_frame, textvariable=self.dest_var)
         self.dest_button = tk.Button(path_frame, text='Browse', width=10, command=self._browse_dest)
@@ -235,11 +240,15 @@ class PhotoSorterApp:
         enabled = self.feature_var.get() == 'sort_copy'
 
         if enabled:
-            self.dest_label.grid(row=2, column=0, sticky='w', pady=(10, 0))
-            self.dest_entry.grid(row=3, column=0, padx=(0, 8), pady=(2, 0), sticky='ew')
-            self.dest_button.grid(row=3, column=1, pady=(2, 0))
-            self.dest_open_button.grid(row=3, column=2, padx=(8, 0), pady=(2, 0))
+            self.selected_files_label.grid(row=2, column=0, sticky='w', pady=(10, 0))
+            self.selected_files_value.grid(row=2, column=1, columnspan=3, sticky='w', pady=(10, 0))
+            self.dest_label.grid(row=3, column=0, sticky='w', pady=(10, 0))
+            self.dest_entry.grid(row=4, column=0, padx=(0, 8), pady=(2, 0), sticky='ew')
+            self.dest_button.grid(row=4, column=1, pady=(2, 0))
+            self.dest_open_button.grid(row=4, column=3, padx=(8, 0), pady=(2, 0))
         else:
+            self.selected_files_label.grid_remove()
+            self.selected_files_value.grid_remove()
             self.dest_label.grid_remove()
             self.dest_entry.grid_remove()
             self.dest_button.grid_remove()
@@ -280,9 +289,42 @@ class PhotoSorterApp:
         self._event_queue.put(('log', line))
 
     def _browse_src(self):
+        if self.feature_var.get() == 'sort_copy':
+            select_folder = messagebox.askyesnocancel(
+                'Copy Source Type',
+                'Choose source folder?\n\nYes = source folder\nNo = one or more files',
+                parent=self.root,
+            )
+            if select_folder is None:
+                return
+
+            if select_folder:
+                picked = choose_folder(title='Select source photo folder', parent=self.root)
+                if picked:
+                    self.src_var.set(str(picked))
+                    self.selected_copy_files = []
+                    self.selected_files_var.set('No files selected')
+                return
+
+            initial = self.src_var.get().strip() or None
+            picked_files = choose_files(
+                title='Select files to copy and sort',
+                parent=self.root,
+                initialdir=initial,
+            )
+            if not picked_files:
+                return
+
+            self.selected_copy_files = picked_files
+            self.src_var.set('')
+            self.selected_files_var.set(f'{len(picked_files)} file(s) selected')
+            return
+
         picked = choose_folder(title='Select source photo folder', parent=self.root)
         if picked:
             self.src_var.set(str(picked))
+            self.selected_copy_files = []
+            self.selected_files_var.set('No files selected')
 
     def _browse_dest(self):
         initial = self.src_var.get().strip() or None
@@ -295,18 +337,29 @@ class PhotoSorterApp:
             self.dest_var.set(str(picked))
 
     def _validate_paths(self) -> tuple[Path | None, Path | None]:
+        feature = self.feature_var.get()
         src_text = self.src_var.get().strip()
-        if not src_text:
-            messagebox.showerror('Missing source', 'Please choose a source folder.', parent=self.root)
-            return None, None
 
-        src = Path(src_text).expanduser()
-        if not src.exists() or not src.is_dir():
-            messagebox.showerror('Invalid source', 'Source folder does not exist or is not a directory.', parent=self.root)
+        src = None
+        if feature != 'sort_copy' or src_text:
+            if not src_text:
+                messagebox.showerror('Missing source', 'Please choose a source folder.', parent=self.root)
+                return None, None
+            src = Path(src_text).expanduser()
+            if not src.exists() or not src.is_dir():
+                messagebox.showerror('Invalid source', 'Source folder does not exist or is not a directory.', parent=self.root)
+                return None, None
+
+        if feature == 'sort_copy' and src is None and not self.selected_copy_files:
+            messagebox.showerror(
+                'Missing source',
+                'Choose either a source folder or one/more files for copy mode.',
+                parent=self.root,
+            )
             return None, None
 
         dest = None
-        if self.feature_var.get() == 'sort_copy':
+        if feature == 'sort_copy':
             dest_text = self.dest_var.get().strip()
             if not dest_text:
                 messagebox.showerror('Missing destination', 'Please choose a destination root folder.', parent=self.root)
@@ -318,30 +371,45 @@ class PhotoSorterApp:
 
         return src, dest
 
-    def _run_feature(self, feature: str, src: Path, dest: Path | None) -> tuple[str, Path | None]:
+    def _run_feature(self, feature: str, src: Path | None, dest: Path | None, selected_files: list[Path]) -> tuple[str, Path | None]:
         if feature == 'sort':
+            if src is None:
+                raise ValueError('Source folder is required for in-place sorting.')
             sort_files(src)
             return 'Sorting completed.', src
         if feature == 'sort_strong':
+            if src is None:
+                raise ValueError('Source folder is required for strong sort.')
             sort_files(src)
             strong_sort(src)
             return 'Sorting and Strong Sort review completed.', src
         if feature == 'duplicates':
+            if src is None:
+                raise ValueError('Source folder is required for duplicate review.')
             find_duplicates(src)
             return 'Duplicate review completed.', src
         if feature == 'live':
+            if src is None:
+                raise ValueError('Source folder is required for Live Photo review.')
             handle_live(src)
             return 'Live Photo review completed.', src
         if feature == 'sort_copy':
-            copied_to = sort_files_copy(src, dest)
+            if dest is None:
+                raise ValueError('Destination root is required for copy mode.')
+            if selected_files:
+                copied_to = sort_selected_files_copy(selected_files, dest)
+            else:
+                if src is None:
+                    raise ValueError('Choose source folder or files for copy mode.')
+                copied_to = sort_files_copy(src, dest)
             return f'Copied and sorted successfully:\n{copied_to}', copied_to
         raise ValueError(f'Unknown feature: {feature}')
 
-    def _run_worker(self, feature: str, src: Path, dest: Path | None):
+    def _run_worker(self, feature: str, src: Path | None, dest: Path | None, selected_files: list[Path]):
         writer = _QueueWriter(self._queue_log)
         try:
             with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-                msg, open_path = self._run_feature(feature, src, dest)
+                msg, open_path = self._run_feature(feature, src, dest, selected_files)
                 writer.flush()
             payload = {'message': msg, 'open_path': str(open_path) if open_path else ''}
             self._event_queue.put(('done', payload))
@@ -382,12 +450,15 @@ class PhotoSorterApp:
             return
 
         src, dest = self._validate_paths()
-        if src is None:
+        if src is None and not (self.feature_var.get() == 'sort_copy' and self.selected_copy_files):
             return
 
         self._append_log('---')
         self._append_log(f'Feature: {self.feature_var.get()}')
-        self._append_log(f'Source: {src}')
+        if src:
+            self._append_log(f'Source: {src}')
+        if self.feature_var.get() == 'sort_copy' and self.selected_copy_files:
+            self._append_log(f'Selected files: {len(self.selected_copy_files)}')
         if dest:
             self._append_log(f'Destination: {dest}')
 
@@ -403,7 +474,7 @@ class PhotoSorterApp:
 
         if feature in {'sort', 'sort_copy'}:
             self._set_busy(True, status=run_status)
-            t = threading.Thread(target=self._run_worker, args=(feature, src, dest), daemon=True)
+            t = threading.Thread(target=self._run_worker, args=(feature, src, dest, self.selected_copy_files.copy()), daemon=True)
             t.start()
             self.root.after(120, self._poll_worker_events)
             return
@@ -412,7 +483,7 @@ class PhotoSorterApp:
         writer = _DirectWriter(self._append_log)
         try:
             with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-                msg, open_path = self._run_feature(feature, src, dest)
+                msg, open_path = self._run_feature(feature, src, dest, self.selected_copy_files.copy())
                 writer.flush()
             self._append_log(msg)
             messagebox.showinfo('Done', msg, parent=self.root)
